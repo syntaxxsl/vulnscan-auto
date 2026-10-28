@@ -17,7 +17,7 @@ import uvicorn
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("VulnScan")
 
-app = FastAPI(title="VulnScan Pro - Clean UI")
+app = FastAPI(title="VulnScan Pro - Dark Theme")
 
 # --- VERİTABANI VE DİZİN AYARLARI ---
 DATA_DIR = os.environ.get("DATA_DIR", "/var/data")
@@ -275,9 +275,7 @@ class ScanConfig(BaseModel):
     manual_urls: str
     ports: bool
     dirs: bool
-    sqli: bool
     lfi: bool
-    xss: bool
 
 @app.post("/api/scan")
 async def start_scan(config: ScanConfig, background_tasks: BackgroundTasks):
@@ -313,36 +311,36 @@ def read_root():
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
         <style>
             :root {
-                --bg: #f3f4f6; --panel: #ffffff; --border: #e5e7eb;
-                --text: #1f2937; --text-light: #6b7280;
+                --bg: #0f1115; --panel: #15181e; --border: #2a2e39;
+                --text: #d1d5db; --text-light: #9ca3af;
                 --primary: #3b82f6; --danger: #ef4444; --success: #10b981; --warning: #f59e0b;
             }
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
             
             /* Top Bar */
-            .top-bar { background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-            .logo h1 { font-size: 1.25rem; font-weight: 700; color: var(--text); }
+            .top-bar { background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; }
+            .logo h1 { font-size: 1.25rem; font-weight: 700; color: #fff; }
             .logo span { color: var(--primary); }
             
             /* Control Panel */
             .control-panel { background: var(--panel); border-bottom: 1px solid var(--border); padding: 20px 30px; display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; }
             .input-group { display: flex; flex-direction: column; gap: 6px; }
             .input-group label { font-size: 0.75rem; color: var(--text-light); font-weight: 600; text-transform: uppercase; }
-            .input-group input, .input-group textarea { background: #f9fafb; border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 6px; font-size: 0.9rem; outline: none; transition: 0.2s; }
+            .input-group input, .input-group textarea { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 6px; font-size: 0.9rem; outline: none; transition: 0.2s; }
             .input-group input:focus, .input-group textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
             .input-group textarea { height: 42px; resize: vertical; }
             
             .toggle-group { display: flex; gap: 8px; }
-            .toggle-btn { background: #f3f4f6; border: 1px solid var(--border); color: var(--text-light); padding: 10px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: 0.2s; user-select: none; }
+            .toggle-btn { background: var(--bg); border: 1px solid var(--border); color: var(--text-light); padding: 10px 16px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: 0.2s; user-select: none; }
             .toggle-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
             
             .btn-start { background: var(--primary); color: #fff; border: none; padding: 0 25px; border-radius: 6px; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: 0.2s; height: 42px; }
             .btn-start:hover { background: #2563eb; }
-            .btn-start:disabled { background: #9ca3af; cursor: not-allowed; }
+            .btn-start:disabled { background: #374151; color: #9ca3af; cursor: not-allowed; }
             
-            .btn-report { background: #fff; border: 1px solid var(--border); color: var(--text); padding: 0 15px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; text-decoration: none; transition: 0.2s; height: 42px; display: flex; align-items: center; }
-            .btn-report:hover { background: #f3f4f6; }
+            .btn-report { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 0 15px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; text-decoration: none; transition: 0.2s; height: 42px; display: flex; align-items: center; }
+            .btn-report:hover { background: #1e2230; }
 
             /* Stats Bar */
             .stats-bar { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 30px; gap: 40px; }
@@ -358,9 +356,9 @@ def read_root():
             .main-layout { display: flex; flex: 1; overflow: hidden; padding: 20px 30px; gap: 20px; }
             
             /* Terminal */
-            .terminal-panel { width: 35%; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-            .panel-header { padding: 12px 20px; border-bottom: 1px solid var(--border); font-size: 0.85rem; color: var(--text); font-weight: 600; display: flex; justify-content: space-between; }
-            .terminal { flex: 1; overflow-y: auto; padding: 15px 20px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; line-height: 1.6; background: #f9fafb; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
+            .terminal-panel { width: 35%; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; }
+            .panel-header { padding: 12px 20px; border-bottom: 1px solid var(--border); font-size: 0.85rem; color: var(--text); font-weight: 600; display: flex; justify-content: space-between; background: #1a1e29; border-top-left-radius: 8px; border-top-right-radius: 8px; }
+            .terminal { flex: 1; overflow-y: auto; padding: 15px 20px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; line-height: 1.6; background: #000; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; }
             .log-line { margin-bottom: 6px; display: flex; gap: 10px; }
             .log-time { color: var(--text-light); min-width: 65px; }
             .log-info { color: var(--primary); }
@@ -368,34 +366,40 @@ def read_root():
             .log-critical { color: var(--danger); font-weight: bold; }
 
             /* Results Table */
-            .table-panel { width: 65%; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; box-shadow: 0 1px 3px rgba(0,0,0,0.05); overflow: hidden; }
-            .table-tools { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 15px; background: #fff; }
-            .table-tools input { flex: 1; background: #f9fafb; border: 1px solid var(--border); color: var(--text); padding: 10px 15px; border-radius: 6px; font-size: 0.9rem; outline: none; transition: 0.2s; }
+            .table-panel { width: 65%; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+            .table-tools { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 15px; background: #1a1e29; }
+            .table-tools input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 15px; border-radius: 6px; font-size: 0.9rem; outline: none; transition: 0.2s; }
             .table-tools input:focus { border-color: var(--primary); }
             
             .table-container { flex: 1; overflow-y: auto; }
             table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 15px 20px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; vertical-align: top; }
-            th { background: #f9fafb; color: var(--text-light); font-weight: 600; position: sticky; top: 0; z-index: 10; }
-            tr:hover { background: #f9fafb; }
+            th, td { padding: 15px 20px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; vertical-align: middle; }
+            th { background: #1a1e29; color: var(--text-light); font-weight: 600; position: sticky; top: 0; z-index: 10; }
+            tr:hover { background: #1e2230; }
             
             .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; }
-            .badge-vuln { background: #fee2e2; color: var(--danger); }
-            .badge-clean { background: #d1fae5; color: var(--success); }
-            .badge-err { background: #fef3c7; color: var(--warning); }
+            .badge-vuln { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+            .badge-clean { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+            .badge-err { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
             
-            /* Exploit Details */
-            .vuln-item { display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
+            .btn-detail { background: #1a1e29; color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
+            .btn-detail:hover { background: #2a2e39; }
+            
+            /* Detay Satırı */
+            .detail-row { display: none; background: #0f1115; }
+            .detail-row td { padding: 15px 20px; border-bottom: 1px solid var(--border); }
+            
+            .vuln-item { display: flex; justify-content: space-between; align-items: center; background: var(--panel); padding: 10px 15px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
             .vuln-info { display: flex; flex-direction: column; gap: 4px; }
             .vuln-type { font-weight: 600; font-size: 0.85rem; color: var(--text); }
             .vuln-path { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-light); word-break: break-all; }
             
             .vuln-actions { display: flex; gap: 8px; }
-            .btn-action { padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; text-decoration: none; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-            .btn-open { background: #e0e7ff; color: #4338ca; }
-            .btn-open:hover { background: #c7d2fe; }
-            .btn-download { background: #dcfce7; color: #15803d; }
-            .btn-download:hover { background: #bbf7d0; }
+            .btn-action { padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; text-decoration: none; display: flex; align-items: center; justify-content: center; transition: 0.2s; border: none; }
+            .btn-open { background: rgba(59, 130, 246, 0.15); color: var(--primary); }
+            .btn-open:hover { background: rgba(59, 130, 246, 0.3); }
+            .btn-download { background: rgba(16, 185, 129, 0.15); color: var(--success); }
+            .btn-download:hover { background: rgba(16, 185, 129, 0.3); }
         </style>
     </head>
     <body>
@@ -442,7 +446,7 @@ def read_root():
                 <span class="stat-value scanned" id="stat-scanned">0</span>
             </div>
             <div class="stat-item">
-                <span class="stat-label">Açık Bulunan</span>
+                <span class="stat-label">Açıklar Bulundu</span>
                 <span class="stat-value vuln" id="stat-vuln">0</span>
             </div>
             <div class="stat-item">
@@ -473,7 +477,7 @@ def read_root():
                             <tr>
                                 <th>Hedef URL</th>
                                 <th>Durum</th>
-                                <th>Bulgular / Zafiyet Detayları</th>
+                                <th>İşlem</th>
                             </tr>
                         </thead>
                         <tbody id="tableBody">
@@ -510,41 +514,20 @@ def read_root():
                     
                     const res = data.data;
                     let statusBadge = "";
-                    let detailHtml = "";
+                    let actionBtn = "";
                     
                     if (res.status === "SIZILDI") {
                         stats.vuln++;
-                        statusBadge = `<span class="badge badge-vuln">Açık</span>`;
-                        
-                        // Bulguları listele
-                        detailHtml = res.vulns.map(v => {
-                            let dlBtn = "";
-                            // Eğer dosya ise (port veya admin paneli değilse) indirme butonu ekle
-                            if (v.type !== "Port" && !v.type.includes("Admin")) {
-                                dlBtn = `<a href="${v.url}" download class="btn-action btn-download">İndir</a>`;
-                            }
-                            
-                            return `
-                                <div class="vuln-item">
-                                    <div class="vuln-info">
-                                        <span class="vuln-type">${v.type}</span>
-                                        <span class="vuln-path">${v.path}</span>
-                                    </div>
-                                    <div class="vuln-actions">
-                                        <a href="${v.url}" target="_blank" class="btn-action btn-open">Aç</a>
-                                        ${dlBtn}
-                                    </div>
-                                </div>
-                            `;
-                        }).join('');
+                        statusBadge = `<span class="badge badge-vuln">Açıklar Bulundu</span>`;
+                        actionBtn = `<button class="btn-detail" onclick="toggleDetail(this)">Detayları Gör</button>`;
                     } else if (res.status === "ERROR" || res.status.startsWith("HTTP")) {
                         stats.error++;
                         statusBadge = `<span class="badge badge-err">${res.status}</span>`;
-                        detailHtml = `<span style="color:var(--text-light); font-size:0.85rem;">Bağlantı sağlanamadı.</span>`;
+                        actionBtn = `<span style="color:var(--text-light); font-size:0.8rem;">-</span>`;
                     } else {
                         stats.clean++;
                         statusBadge = `<span class="badge badge-clean">Temiz</span>`;
-                        detailHtml = `<span style="color:var(--text-light); font-size:0.85rem;">Zafiyet bulunamadı.</span>`;
+                        actionBtn = `<span style="color:var(--text-light); font-size:0.8rem;">-</span>`;
                     }
 
                     document.getElementById('stat-scanned').innerText = stats.scanned;
@@ -552,18 +535,61 @@ def read_root():
                     document.getElementById('stat-clean').innerText = stats.clean;
                     document.getElementById('stat-error').innerText = stats.error;
 
+                    // Ana Satır
                     const tr = document.createElement("tr");
                     tr.setAttribute('data-search', (res.target + " " + res.status).toLowerCase());
-                    
                     tr.innerHTML = `
-                        <td style="font-weight: 500; word-break:break-all; width: 35%;">${res.target}</td>
-                        <td style="width: 15%;">${statusBadge}</td>
-                        <td style="width: 50%;">${detailHtml}</td>
+                        <td style="font-weight: 500; word-break:break-all;">${res.target}</td>
+                        <td>${statusBadge}</td>
+                        <td>${actionBtn}</td>
                     `;
+
+                    // Detay Satırı (Gizli)
+                    const detailTr = document.createElement("tr");
+                    detailTr.className = "detail-row";
                     
+                    if (res.vulns && res.vulns.length > 0) {
+                        detailTr.innerHTML = `
+                            <td colspan="3">
+                                ${res.vulns.map(v => {
+                                    let dlBtn = "";
+                                    if (v.type !== "Port" && !v.type.includes("Admin")) {
+                                        dlBtn = `<a href="${v.url}" download class="btn-action btn-download">İndir</a>`;
+                                    }
+                                    return `
+                                        <div class="vuln-item">
+                                            <div class="vuln-info">
+                                                <span class="vuln-type">${v.type}</span>
+                                                <span class="vuln-path">${v.path}</span>
+                                            </div>
+                                            <div class="vuln-actions">
+                                                <a href="${v.url}" target="_blank" class="btn-action btn-open">Aç</a>
+                                                ${dlBtn}
+                                            </div>
+                                        </div>
+                                    `;
+                                }).join('')}
+                            </td>
+                        `;
+                    }
+
                     tableBody.insertBefore(tr, tableBody.firstChild);
+                    tableBody.insertBefore(detailTr, tr.nextSibling);
                 }
             };
+
+            function toggleDetail(btn) {
+                const tr = btn.closest('tr');
+                const detailTr = tr.nextElementSibling;
+                
+                if (detailTr.style.display === "table-row") {
+                    detailTr.style.display = "none";
+                    btn.innerText = "Detayları Gör";
+                } else {
+                    detailTr.style.display = "table-row";
+                    btn.innerText = "Gizle";
+                }
+            }
 
             function toggleBtn(btn) {
                 btn.classList.toggle('active');
@@ -572,7 +598,7 @@ def read_root():
             function filterTable() {
                 const input = document.getElementById("searchBar");
                 const filter = input.value.toLowerCase();
-                const trs = document.getElementById("resultsTable").querySelectorAll("tbody tr");
+                const trs = document.getElementById("resultsTable").querySelectorAll("tbody tr:not(.detail-row)");
 
                 trs.forEach(tr => {
                     const searchData = tr.getAttribute('data-search');
@@ -580,6 +606,10 @@ def read_root():
                         tr.style.display = "";
                     } else {
                         tr.style.display = "none";
+                        const detailTr = tr.nextElementSibling;
+                        if (detailTr && detailTr.classList.contains('detail-row')) {
+                            detailTr.style.display = "none";
+                        }
                     }
                 });
             }
@@ -604,9 +634,7 @@ def read_root():
                     manual_urls: document.getElementById('manual_urls').value.trim(),
                     ports: document.getElementById('mod-ports').classList.contains('active'),
                     dirs: document.getElementById('mod-dirs').classList.contains('active'),
-                    sqli: false, // Devre dışı (arayüzden kaldırıldı)
-                    lfi: document.getElementById('mod-lfi').classList.contains('active'),
-                    xss: false  // Devre dışı
+                    lfi: document.getElementById('mod-lfi').classList.contains('active')
                 };
 
                 try {
