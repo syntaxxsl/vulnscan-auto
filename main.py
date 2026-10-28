@@ -232,20 +232,23 @@ def read_root():
             }
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; display: flex; overflow: hidden; }
-            .sidebar { width: 320px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+            
+            /* Sidebar */
+            .sidebar { width: 300px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
             .brand { padding: 20px; border-bottom: 1px solid var(--border); }
             .brand h1 { font-size: 1.2rem; font-weight: 800; color: #fff; }
             .brand p { font-size: 0.75rem; color: var(--accent); font-weight: 600; letter-spacing: 1px; }
-            .settings { padding: 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+            .settings { padding: 20px; flex: 1; display: flex; flex-direction: column; gap: 15px; }
             .setting-group { display: flex; flex-direction: column; gap: 5px; }
             .setting-group label { font-size: 0.8rem; color: #94a3b8; font-weight: 600; }
-            .setting-group input[type="number"] { background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
+            .setting-group input { background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
             .checkbox-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px; }
             .checkbox-group label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text); cursor: pointer; background: var(--bg); padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
-            .checkbox-group input { accent-color: var(--accent); }
-            .btn-start { background: var(--accent); color: #fff; border: none; padding: 15px; border-radius: 6px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: 0.2s; margin-top: 10px; }
+            .btn-start { background: var(--accent); color: #fff; border: none; padding: 15px; border-radius: 6px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: 0.2s; margin-top: auto; }
             .btn-start:hover { background: #4f46e5; }
             .btn-start:disabled { background: #334155; cursor: not-allowed; }
+
+            /* Main Content */
             .main-content { flex: 1; display: flex; flex-direction: column; }
             .stats-bar { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 25px; gap: 30px; }
             .stat-item { display: flex; flex-direction: column; }
@@ -255,8 +258,11 @@ def read_root():
             .stat-value.vuln { color: var(--danger); }
             .stat-value.clean { color: var(--success); }
             .stat-value.error { color: var(--warning); }
+
             .content-layout { display: flex; flex: 1; overflow: hidden; }
-            .terminal-panel { width: 35%; background: #000; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+            
+            /* Terminal */
+            .terminal-panel { width: 30%; background: #000; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
             .panel-header { padding: 10px 15px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; display: flex; justify-content: space-between; }
             .terminal { flex: 1; overflow-y: auto; padding: 15px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.6; }
             .log-line { margin-bottom: 4px; word-wrap: break-word; }
@@ -264,33 +270,37 @@ def read_root():
             .log-info { color: var(--accent); }
             .log-warning { color: var(--warning); }
             .log-critical { color: var(--danger); font-weight: bold; }
+
+            /* Table Panel */
+            .table-panel { width: 70%; display: flex; flex-direction: column; background: var(--bg); }
+            .table-tools { padding: 10px 15px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; }
+            .table-tools input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 8px 12px; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 0.85rem; outline: none; }
+            .table-tools input:focus { border-color: var(--accent); }
             
-            /* Card Layout */
-            .results-panel { width: 65%; display: flex; flex-direction: column; background: var(--bg); }
-            .results-list { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
-            .site-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-            .site-card.sizildi { border-left: 4px solid var(--danger); }
-            .site-card.temiz { border-left: 4px solid var(--success); }
-            .site-card.hata { border-left: 4px solid var(--warning); opacity: 0.7; }
+            .table-container { flex: 1; overflow-y: auto; padding: 15px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+            th { background: var(--panel); color: #94a3b8; font-weight: 600; position: sticky; top: 0; z-index: 10; }
+            tr:hover { background: #1e2230; }
             
-            .site-header { padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; background: #1a1e29; }
-            .site-url { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; color: var(--text); word-break: break-all; }
-            .site-status { font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; font-weight: 600; }
-            .status-sizildi { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); }
-            .status-temiz { background: rgba(16, 185, 129, 0.1); color: var(--success); }
-            .status-hata { background: rgba(245, 158, 11, 0.1); color: var(--warning); }
+            .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+            .badge-vuln { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+            .badge-clean { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+            .badge-err { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
             
-            /* Sub-paths */
-            .paths-list { padding: 10px 20px; list-style: none; display: flex; flex-direction: column; gap: 8px; }
-            .path-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--bg); border-radius: 4px; border: 1px solid var(--border); }
+            .btn-detail { background: #334155; color: #fff; border: none; padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; font-weight: 600; }
+            .btn-detail:hover { background: #475569; }
+            
+            /* Sub Paths */
+            .sub-paths-row { background: #0d1117; display: none; }
+            .sub-paths-row td { padding: 15px 30px; }
+            .path-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: var(--panel); border-radius: 4px; border: 1px solid var(--border); margin-bottom: 8px; }
             .path-info { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text); }
             .path-meta { font-size: 0.75rem; color: #64748b; margin-left: 10px; }
             .path-actions { display: flex; gap: 8px; }
-            .btn-small { padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; text-decoration: none; transition: 0.2s; color: #fff; }
+            .btn-small { padding: 6px 12px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; text-decoration: none; color: #fff; }
             .btn-open { background: var(--accent); }
-            .btn-open:hover { background: #4f46e5; }
             .btn-download { background: var(--danger); }
-            .btn-download:hover { background: #dc2626; }
         </style>
     </head>
     <body>
@@ -302,7 +312,7 @@ def read_root():
             <div class="settings">
                 <div class="setting-group">
                     <label>Hedef Limiti</label>
-                    <input type="number" id="limit" value="50" min="10" max="1000">
+                    <input type="number" id="limit" value="100" min="10" max="1000">
                 </div>
                 <div class="setting-group">
                     <label>Eşzamanlı İstek</label>
@@ -347,9 +357,24 @@ def read_root():
                     <div id="terminal" class="terminal"></div>
                 </div>
                 
-                <div class="results-panel">
-                    <div class="panel-header">Tarama Sonuçları ve Alt Kademeler</div>
-                    <div id="results-list" class="results-list"></div>
+                <div class="table-panel">
+                    <div class="table-tools">
+                        <input type="text" id="searchBar" placeholder="URL veya Durum Ara..." onkeyup="filterTable()">
+                    </div>
+                    <div class="table-container">
+                        <table id="resultsTable">
+                            <thead>
+                                <tr>
+                                    <th style="width: 50%;">Hedef URL</th>
+                                    <th style="width: 25%;">Durum</th>
+                                    <th style="width: 25%;">İşlem</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tableBody">
+                                <!-- Sonuçlar buraya gelecek -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -358,7 +383,7 @@ def read_root():
             const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
             const ws = new WebSocket(protocol + window.location.host + "/ws");
             const terminal = document.getElementById('terminal');
-            const resultsList = document.getElementById('results-list');
+            const tableBody = document.getElementById('tableBody');
             
             let stats = { scanned: 0, vuln: 0, clean: 0, error: 0 };
 
@@ -380,25 +405,19 @@ def read_root():
                     stats.scanned++;
                     
                     const res = data.data;
-                    let cardClass = "site-card";
-                    let statusClass = "";
-                    let statusText = "";
+                    let statusBadge = "";
+                    let trClass = "";
                     
                     if (res.status === "SIZILDI") {
                         stats.vuln++;
-                        cardClass += " sizildi";
-                        statusClass = "status-sizildi";
-                        statusText = "AÇIK BULUNDU";
+                        statusBadge = `<span class="badge badge-vuln">AÇIK BULUNDU</span>`;
+                        trClass = "vuln-row";
                     } else if (res.status === "ERROR" || res.status.startsWith("HTTP")) {
                         stats.error++;
-                        cardClass += " hata";
-                        statusClass = "status-hata";
-                        statusText = res.status;
+                        statusBadge = `<span class="badge badge-err">${res.status}</span>`;
                     } else {
                         stats.clean++;
-                        cardClass += " temiz";
-                        statusClass = "status-temiz";
-                        statusText = "TEMİZ";
+                        statusBadge = `<span class="badge badge-clean">TEMİZ</span>`;
                     }
 
                     document.getElementById('stat-scanned').innerText = stats.scanned;
@@ -406,15 +425,25 @@ def read_root():
                     document.getElementById('stat-clean').innerText = stats.clean;
                     document.getElementById('stat-error').innerText = stats.error;
 
-                    const card = document.createElement("div");
-                    card.className = cardClass;
+                    // Ana Satır (TR)
+                    const tr = document.createElement("tr");
+                    tr.className = trClass;
+                    tr.setAttribute('data-url', res.target.toLowerCase());
+                    tr.innerHTML = `
+                        <td style="font-family:'JetBrains Mono', monospace; word-break:break-all;">${res.target}</td>
+                        <td>${statusBadge}</td>
+                        <td><button class="btn-detail" onclick="toggleDetails(this)">İncele</button></td>
+                    `;
+
+                    // Detay Satırı (Alt Kademeler)
+                    const detailTr = document.createElement("tr");
+                    detailTr.className = "sub-paths-row";
                     
                     let pathsHtml = "";
                     if (res.discovered && res.discovered.length > 0) {
-                        pathsHtml = `<ul class="paths-list">`;
                         res.discovered.forEach(p => {
                             pathsHtml += `
-                                <li class="path-item">
+                                <div class="path-item">
                                     <div>
                                         <span class="path-info">${p.path}</span>
                                         <span class="path-meta">(${p.size} | HTTP ${p.status})</span>
@@ -423,23 +452,52 @@ def read_root():
                                         <a href="${p.url}" target="_blank" class="btn-small btn-open">Aç</a>
                                         <a href="${p.url}" download class="btn-small btn-download">İndir</a>
                                     </div>
-                                </li>
+                                </div>
                             `;
                         });
-                        pathsHtml += `</ul>`;
+                    } else {
+                        pathsHtml = "<div style='color:#64748b; font-size:0.85rem;'>Alt kademe bulunamadı.</div>";
                     }
 
-                    card.innerHTML = `
-                        <div class="site-header">
-                            <div class="site-url">${res.target}</div>
-                            <div class="site-status ${statusClass}">${statusText}</div>
-                        </div>
-                        ${pathsHtml}
-                    `;
-                    
-                    resultsList.insertBefore(card, resultsList.firstChild);
+                    detailTr.innerHTML = `<td colspan="3">${pathsHtml}</td>`;
+
+                    tableBody.insertBefore(tr, tableBody.firstChild);
+                    tableBody.insertBefore(detailTr, tr.nextSibling);
                 }
             };
+
+            function toggleDetails(btn) {
+                const tr = btn.closest('tr');
+                const detailTr = tr.nextElementSibling;
+                
+                if (detailTr.style.display === "table-row") {
+                    detailTr.style.display = "none";
+                    btn.innerText = "İncele";
+                } else {
+                    detailTr.style.display = "table-row";
+                    btn.innerText = "Gizle";
+                }
+            }
+
+            function filterTable() {
+                const input = document.getElementById("searchBar");
+                const filter = input.value.toLowerCase();
+                const table = document.getElementById("resultsTable");
+                const trs = table.querySelectorAll("tbody tr:not(.sub-paths-row)");
+
+                trs.forEach(tr => {
+                    const url = tr.getAttribute('data-url');
+                    if (url && url.includes(filter)) {
+                        tr.style.display = "";
+                    } else {
+                        tr.style.display = "none";
+                        const detailTr = tr.nextElementSibling;
+                        if (detailTr && detailTr.classList.contains('sub-paths-row')) {
+                            detailTr.style.display = "none";
+                        }
+                    }
+                });
+            }
 
             async function startScan() {
                 const btn = document.getElementById('startBtn');
@@ -447,7 +505,7 @@ def read_root():
                 btn.innerText = "TARANIYOR...";
                 
                 terminal.innerHTML = "";
-                resultsList.innerHTML = "";
+                tableBody.innerHTML = "";
                 stats = { scanned: 0, vuln: 0, clean: 0, error: 0 };
                 document.getElementById('stat-scanned').innerText = 0;
                 document.getElementById('stat-vuln').innerText = 0;
