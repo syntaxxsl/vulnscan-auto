@@ -3,204 +3,53 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Zafiyet Tarayıcı</title>
+<title>Sistem Tarayıcı</title>
 <style>
     :root {
-        --bg-color: #0d1117;
-        --panel-bg: #161b22;
-        --text-main: #c9d1d9;
-        --text-muted: #8b949e;
-        --border-color: #30363d;
-        --accent: #58a6ff;
-        --accent-hover: #3182ce;
-        --danger: #f85149;
-        --success: #2ea043;
+        --bg-color: #0d1117; --panel-bg: #161b22; --text-main: #c9d1d9;
+        --text-muted: #8b949e; --border-color: #30363d; --accent: #58a6ff;
+        --accent-hover: #3182ce; --danger: #f85149; --success: #2ea043;
         --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
         --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     }
-
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
     body {
-        background-color: var(--bg-color);
-        color: var(--text-main);
-        font-family: var(--font-sans);
-        line-height: 1.5;
-        padding: 16px;
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+        background-color: var(--bg-color); color: var(--text-main); font-family: var(--font-sans);
+        line-height: 1.5; padding: 16px; min-height: 100vh; display: flex; flex-direction: column; gap: 16px;
     }
-
-    .header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding-bottom: 16px;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .header h1 {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: #fff;
-    }
-
-    .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        background: var(--panel-bg);
-        padding: 16px;
-        border-radius: 8px;
-        border: 1px solid var(--border-color);
-    }
-
-    .form-group {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        flex: 1;
-        min-width: 150px;
-    }
-
-    .form-group label {
-        font-size: 0.85rem;
-        color: var(--text-muted);
-    }
-
+    .header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }
+    .header h1 { font-size: 1.25rem; font-weight: 600; color: #fff; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; background: var(--panel-bg); padding: 16px; border-radius: 8px; border: 1px solid var(--border-color); }
+    .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 150px; }
+    .form-group label { font-size: 0.85rem; color: var(--text-muted); }
     select, button, input {
-        padding: 8px 12px;
-        border-radius: 6px;
-        border: 1px solid var(--border-color);
-        background: var(--bg-color);
-        color: var(--text-main);
-        font-family: inherit;
-        font-size: 0.9rem;
-        outline: none;
-        transition: all 0.2s;
+        padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color);
+        background: var(--bg-color); color: var(--text-main); font-family: inherit; font-size: 0.9rem; outline: none;
     }
-
-    select:focus, input:focus {
-        border-color: var(--accent);
-    }
-
-    button {
-        cursor: pointer;
-        font-weight: 600;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-    }
-
-    button.primary {
-        background-color: var(--accent);
-        color: #fff;
-        border-color: var(--accent);
-    }
-
+    select:focus, input:focus { border-color: var(--accent); }
+    button { cursor: pointer; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    button.primary { background-color: var(--accent); color: #fff; border-color: var(--accent); }
     button.primary:hover { background-color: var(--accent-hover); }
-
-    button.danger {
-        background-color: transparent;
-        color: var(--danger);
-        border-color: var(--danger);
-    }
-
+    button.danger { background-color: transparent; color: var(--danger); border-color: var(--danger); }
     button.danger:hover { background: rgba(248, 81, 73, 0.1); }
-
-    .grid-container {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 16px;
-        flex: 1;
-    }
-
-    @media (min-width: 900px) {
-        .grid-container {
-            grid-template-columns: 300px 1fr;
-        }
-    }
-
-    .panel {
-        background: var(--panel-bg);
-        border: 1px solid var(--border-color);
-        border-radius: 8px;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-    }
-
-    .panel-header {
-        padding: 12px 16px;
-        border-bottom: 1px solid var(--border-color);
-        font-weight: 600;
-        font-size: 0.9rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .log-output {
-        padding: 12px;
-        font-family: var(--font-mono);
-        font-size: 0.8rem;
-        overflow-y: auto;
-        height: 250px;
-        color: var(--text-muted);
-        white-space: pre-wrap;
-        word-break: break-all;
-    }
-
-    .table-wrapper {
-        overflow-x: auto;
-        flex: 1;
-    }
-
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.85rem;
-        text-align: left;
-    }
-
-    th {
-        background: var(--bg-color);
-        padding: 10px 16px;
-        font-weight: 600;
-        color: var(--text-muted);
-        border-bottom: 1px solid var(--border-color);
-        position: sticky;
-        top: 0;
-    }
-
-    td {
-        padding: 10px 16px;
-        border-bottom: 1px solid var(--border-color);
-    }
-
+    .grid-container { display: grid; grid-template-columns: 1fr; gap: 16px; flex: 1; }
+    @media (min-width: 900px) { .grid-container { grid-template-columns: 300px 1fr; } }
+    .panel { background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; }
+    .panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center; }
+    .log-output { padding: 12px; font-family: var(--font-mono); font-size: 0.8rem; overflow-y: auto; height: 250px; color: var(--text-muted); white-space: pre-wrap; word-break: break-all; }
+    .table-wrapper { overflow-x: auto; flex: 1; max-height: 600px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; text-align: left; }
+    th { background: var(--bg-color); padding: 10px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); position: sticky; top: 0; }
+    td { padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
     tr:hover { background: rgba(255,255,255,0.02); }
-
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-
-    .badge {
-        display: inline-block;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
+    .badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
     .badge-yuksek { background: rgba(248,81,73,0.15); color: var(--danger); }
-    .badge-orta { background: rgba(210,153,34,0.15); color: #d29922; }
     .badge-bilgi { background: rgba(88,166,255,0.15); color: var(--accent); }
-
 </style>
 </head>
 <body>
-
     <div class="header">
         <h1>Sistem Tarayıcı</h1>
         <span class="badge badge-bilgi" id="durumBadge">Bağlantı Bekleniyor</span>
@@ -208,55 +57,35 @@
 
     <div class="controls">
         <div class="form-group">
-            <label>Hedef URL</label>
+            <label>Hedef URL (Boş bırakılırsa otomatik arar)</label>
             <input type="text" id="hedefUrl" placeholder="http://example.com">
         </div>
-        <div class="form-group">
-            <label>Profil</label>
-            <select id="profil">
-                <option value="hizli">Hızlı Tarama</option>
-                <option value="derin">Derin Tarama</option>
-            </select>
-        </div>
         <div class="form-group" style="justify-content: flex-end; flex-direction: row; align-items: center; gap: 8px;">
-            <button class="primary" onclick="taramaBaslat()">
-                <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z"/></svg>
-                Başlat
-            </button>
+            <button class="primary" onclick="taramaBaslat()">Başlat</button>
             <button class="danger" onclick="taramaIptal()">İptal</button>
         </div>
     </div>
 
     <div class="grid-container">
-        <!-- Sol Panel: Log -->
         <div class="panel">
             <div class="panel-header">
                 <span>Canlı Log</span>
                 <button class="danger" style="padding: 2px 8px; font-size: 0.7rem;" onclick="document.getElementById('log').innerHTML=''">Temizle</button>
             </div>
-            <div class="log-output" id="log">Sistem hazır. Taramayı başlatın...</div>
+            <div class="log-output" id="log">Sistem hazır...</div>
         </div>
 
-        <!-- Sağ Panel: Tablo -->
         <div class="panel">
             <div class="panel-header">
-                <span>Bulunan Zafiyetler / Sonuçlar</span>
+                <span>Sonuçlar</span>
                 <a href="/api/report/csv" style="font-size: 0.8rem;">CSV İndir</a>
             </div>
             <div class="table-wrapper">
                 <table id="tablo">
                     <thead>
-                        <tr>
-                            <th>Hedef</th>
-                            <th>Modül</th>
-                            <th>Bulgu</th>
-                            <th>Önem</th>
-                            <th>İşlem</th>
-                        </tr>
+                        <tr><th>Hedef</th><th>Modül</th><th>Bulgu</th><th>İşlem</th></tr>
                     </thead>
-                    <tbody>
-                        <!-- Satırlar buraya eklenecek -->
-                    </tbody>
+                    <tbody></tbody>
                 </table>
             </div>
         </div>
@@ -271,7 +100,6 @@
 
     ws.onopen = () => {
         durumBadge.textContent = "Bağlı";
-        durumBadge.className = "badge badge-success";
         durumBadge.style.background = "rgba(46,160,67,0.15)";
         durumBadge.style.color = "var(--success)";
         logEl.textContent += "\n[+] WebSocket bağlantısı kuruldu.";
@@ -286,75 +114,50 @@
     ws.onmessage = (e) => {
         try {
             const data = JSON.parse(e.data);
-            
             if (data.tip === 'log') {
                 logEl.textContent += `\n[${new Date().toLocaleTimeString()}] ${data.mesaj}`;
                 logEl.scrollTop = logEl.scrollHeight;
-            } 
-            else if (data.tip === 'tamam') {
+            } else if (data.tip === 'tamam') {
                 logEl.textContent += `\n[${new Date().toLocaleTimeString()}] [✔] Tamamlandı: ${data.hedef}`;
                 logEl.scrollTop = logEl.scrollHeight;
-            }
-            else if (data.tip === 'bulgu') {
+            } else if (data.tip === 'bulgu') {
                 logEl.textContent += `\n[${new Date().toLocaleTimeString()}] [!] Bulgu: ${data.modul} -> ${data.bulgu}`;
                 logEl.scrollTop = logEl.scrollHeight;
                 
-                // Tabloya ekle
                 const row = tabloEl.insertRow(0);
-                
-                let onemClass = "badge-bilgi";
-                let onemText = "Bilgi";
-                if (data.bulgu.toLowerCase().includes("kritik") || data.bulgu.toLowerCase().includes("cve")) {
-                    onemClass = "badge-yuksek"; onemText = "Kritik";
-                } else if (data.bulgu.toLowerCase().includes("xss") || data.bulgu.toLowerCase().includes("lfi") || data.bulgu.toLowerCase().includes("s3")) {
-                    onemClass = "badge-yuksek"; onemText = "Yüksek";
-                }
-
                 row.innerHTML = `
                     <td>${data.hedef}</td>
                     <td>${data.modul}</td>
                     <td>${data.bulgu}</td>
-                    <td><span class="badge ${onemClass}">${onemText}</span></td>
-                    <td><a href="${data.hedef}" target="_blank" rel="noopener noreferrer">Aç</a></td>
+                    <td><a href="${data.hedef}" target="_blank">Aç</a></td>
                 `;
             }
-        } catch (err) {
-            console.error("Mesaj işleme hatası:", err);
-        }
+        } catch (err) { console.error(err); }
     };
 
     function taramaBaslat() {
         const hedef = document.getElementById('hedefUrl').value.trim();
-        if (!hedef) {
-            alert("Lütfen bir hedef URL girin.");
-            return;
-        }
+        tabloEl.innerHTML = "";
         
-        logEl.textContent += `\n\n[*] Tarama başlatılıyor: ${hedef}`;
-        logEl.scrollTop = logEl.scrollHeight;
-        tabloEl.innerHTML = ""; // Tabloyu temizle
-
-        // Backend'e POST isteği gönder
+        const bodyData = hedef ? { hedefler: [hedef] } : {}; // Boşsa otomatik keşif çalışır
+        
+        logEl.textContent += `\n\n[*] Tarama başlatılıyor...`;
+        
         fetch('/api/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hedefler: [hedef] })
+            body: JSON.stringify(bodyData)
         }).then(res => res.json())
           .then(data => {
-              if (data.durum !== "baslatildi") {
-                  logEl.textContent += `\n[!] Hata: ${JSON.stringify(data)}`;
-              }
-          }).catch(err => {
-              logEl.textContent += `\n[!] Ağ hatası: ${err.message}`;
-          });
+              if (data.durum !== "baslatildi") logEl.textContent += `\n[!] Hata: ${JSON.stringify(data)}`;
+          }).catch(err => logEl.textContent += `\n[!] Ağ hatası: ${err.message}`);
     }
 
     function taramaIptal() {
-        fetch('/api/scan/iptal', { method: 'POST' })
-            .then(() => {
-                logEl.textContent += `\n[*] İptal isteği gönderildi.`;
-                logEl.scrollTop = logEl.scrollHeight;
-            });
+        fetch('/api/scan/iptal', { method: 'POST' }).then(() => {
+            logEl.textContent += `\n[*] İptal isteği gönderildi.`;
+            logEl.scrollTop = logEl.scrollHeight;
+        });
     }
 </script>
 </body>
