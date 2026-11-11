@@ -1,0 +1,18 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Zafiyet Tarayici</title>
+<style>body{background:#111;color:#0f0;font-family:monospace}table{border-collapse:collapse;width:100%}td,th{border:1px solid #0f0;padding:4px}</style></head>
+<body><h2>KONTROL BASLAT</h2>
+<select id="profil"><option value="hizli">Hizli</option><option value="derin">Derin</option></select>
+<button onclick="fetch('/api/scan',{method:'POST'})">Taramayi Baslat</button>
+<button onclick="fetch('/api/scan/iptal',{method:'POST'})">Iptal</button>
+<a href="/api/report/csv">CSV Indir</a>
+<pre id="log"></pre>
+<table id="tablo"><tr><th>Hedef</th><th>Modul</th><th>Bulgu</th><th>Islem</th></tr></table>
+<script>
+const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+const ws=new WebSocket(proto+location.host+'/ws');
+ws.onmessage=e=>{const d=JSON.parse(e.data);
+ if(d.tip=='log'){document.getElementById('log').textContent+=d.mesaj+'\n';}
+ if(d.tip=='bulgu'){const t=document.getElementById('tablo');const r=t.insertRow(-1);
+  r.innerHTML=`<td>${d.hedef}</td><td>${d.modul}</td><td>${d.bulgu}</td>
+  <td><a href='${d.hedef}' target='_blank'>Ac</a></td>`;}};
+</script></body></html>
